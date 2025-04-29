@@ -1,0 +1,469 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Questionnaire",
+  "description": "Represents a survey questionnaire structure.",
+  "type": "object",
+  "properties": {
+    "_v": {
+      "description": "Version of the questionnaire data model.",
+      "type": ["string", "null"]
+    },
+    "_d": {
+      "description": "Date on which the questionnaire was generated.",
+      "type": "string",
+      "format": "date-time"
+    },
+    "Id": {
+      "description": "The unique identifier for the questionnaire.",
+      "type": "integer"
+    },
+    "Name": {
+      "description": "The name of the questionnaire.",
+      "type": ["string", "null"]
+    },
+    "Version": {
+      "description": "The version number of the questionnaire.",
+      "type": "integer"
+    },
+    "UseS2": {
+      "description": "Indicates if S2 (Survey System 2) features are used.",
+      "type": "boolean"
+    },
+    "Modality": {
+      "description": "The modality of the survey questionnaire.",
+      "type": "string",
+      "enum": ["Master", "Online", "Phone"]
+    },
+    "Settings": {
+      "description": "A dictionary of various settings for the questionnaire. The exact structure of values is flexible.",
+      "type": "object",
+      "additionalProperties": true
+    },
+    "Languages": {
+      "description": "A list of language codes supported by the questionnaire.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "DefaultLanguage": {
+      "description": "The default language code for the questionnaire.",
+      "type": ["string", "null"]
+    },
+    "Blocks": {
+      "description": "A collection of question blocks within the questionnaire.",
+      "type": ["array", "null"],
+      "items": {
+        "$ref": "#/definitions/Block"
+      }
+    },
+    "ChoiceLists": {
+      "description": "A collection of choice lists used in questions.",
+      "type": ["array", "null"],
+      "items": {
+        "type": "array",
+        "items": {
+          "$ref": "#/definitions/Choice"
+        }
+      }
+    },
+    "QuestionStyles": {
+      "description": "A collection of custom question styles.",
+      "type": ["array", "null"],
+      "items": {
+        "$ref": "#/definitions/QuestionStyle"
+      }
+    },
+    "Shortcuts": {
+      "description": "A collection of defined shortcuts.",
+      "type": ["array", "null"],
+      "items": {
+        "$ref": "#/definitions/Shortcut"
+      }
+    },
+    "Randomizations": {
+      "description": "A collection of randomization definitions.",
+      "type": ["array", "null"],
+      "items": {
+        "$ref": "#/definitions/Randomization"
+      }
+    },
+    "Columns": {
+      "description": "A dictionary defining data columns.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "SurveyProperties": {
+      "description": "A dictionary of survey-level properties.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "TranslatedTexts": {
+      "description": "A dictionary containing translations for various texts, keyed by language code.",
+      "type": "object",
+      "additionalProperties": {
+        "description": "Translations for a specific language.",
+        "type": "object",
+        "additionalProperties": {
+          "type": "string"
+        }
+      }
+    },
+    "Theme": {
+      "description": "The theme associated with the questionnaire.",
+      "$ref": "#/definitions/Theme"
+    }
+  },
+  "required": [
+    // "_v",
+    // "_d",
+    "Id",
+    // "Name",
+    "Version",
+    "UseS2",
+    "Modality",
+    "Settings",
+    "Languages",
+    "DefaultLanguage",
+    "Blocks",
+    "ChoiceLists",
+    "QuestionStyles",
+    "Shortcuts",
+    "Randomizations",
+    "Columns",
+    "SurveyProperties",
+    "TranslatedTexts",
+    "Theme"
+     // TODO: Review which properties are actually mandatory.
+  ],
+  "definitions": {
+    "Block": {
+      "type": "object",
+      "properties": {
+        "Id": { "type": "integer" },
+        "Name": { "type": ["string", "null"] },
+        "Settings": {
+           "description": "Settings specific to the block.",
+           "type": "object",
+           "additionalProperties": true
+         },
+        "Questions": {
+          "type": ["array", "null"],
+          "items": { "$ref": "#/definitions/Question" }
+        },
+        "Randomizations": {
+           "type": ["array", "null"],
+           "items": { "$ref": "#/definitions/Randomization" }
+        },
+        "Theme": { "$ref": "#/definitions/Theme" },
+        "SkipLogic": { "type": ["string", "null"] },
+        "DisplayLogic": { "type": ["string", "null"] }
+      },
+       "required": ["Id"] // Adjust as needed
+    },
+    "Choice": {
+       "type": "object",
+       "properties": {
+         "Name": { "type": ["string", "null"] },
+         "Settings": {
+            "description": "Settings specific to the choice.",
+            "type": "object",
+            "additionalProperties": true
+         },
+         "Value": { "type": ["string", "null"] },
+         "ParentValue": { "type": ["string", "null"] },
+         "TranslatedTexts": {
+             "description": "Translations for the choice.",
+             "type": "object",
+             "additionalProperties": {
+                "type": "object",
+                "additionalProperties": { "type": "string" }
+              }
+         },
+         "OpenEndDisplayLogic": { "type": ["string", "null"] },
+         "SkipLogic": { "type": ["string", "null"] },
+         "DisplayLogic": { "type": ["string", "null"] },
+         "Position": { "type": "integer" }
+       },
+       "required": ["Name", "Value", "Position"] // Adjust as needed
+    },
+    "QuestionStyle": {
+      "type": "object",
+      "properties": {
+        "Name": { "type": ["string", "null"] },
+        "Properties": {
+            "description": "Properties defining the question style.",
+            "type": "object",
+            "additionalProperties": true
+        }
+      },
+      "required": ["Name", "Properties"] // Adjust as needed
+    },
+    "Shortcut": {
+      "type": "object",
+      "properties": {
+        "Id": { "type": "integer" },
+        "BlockName": { "type": ["string", "null"] },
+        "Type": {
+          "type": "string",
+          "description": "The type of exit behavior for the shortcut.",
+          "enum": ["CallingQuestion", "NextQuestion"] // Updated based on ShortcutExitToType enum
+        },
+        "TranslatedTexts": {
+             "description": "Translations for the shortcut.",
+             "type": "object",
+             "additionalProperties": {
+                "type": "object",
+                "additionalProperties": { "type": "string" }
+              }
+        }
+      },
+      "required": ["Id", "BlockName", "Type"] // Adjust as needed
+    },
+    "Randomization": {
+      "type": "object",
+      "properties": {
+        "Id": { "type": ["integer", "null"] },
+        "Pattern": {
+          "type": "string",
+          "description": "The primary randomization pattern."
+           // "enum": [...] // TODO: Define enum values for Acuity4.API.Enums.RandomizationPattern
+        },
+        "GroupCount": { "type": ["integer", "null"] },
+        "GroupPattern": {
+          "type": "string",
+          "description": "The randomization pattern within groups."
+          // "enum": [...] // TODO: Define enum values for Acuity4.API.Enums.RandomizationPattern
+        },
+        "Bounds": { "type": ["string", "null"], "description": "Typically 'startName-endName' format." },
+        "Start": { "type": ["string", "null"], "description": "Explicit start boundary name."},
+        "End": { "type": ["string", "null"], "description": "Explicit end boundary name."},
+        "SeedAdjust": { "type": ["integer", "null"] },
+        "SynchronizedQuestion": { "type": ["string", "null"] },
+        "SynchronizedWithId": { "type": ["integer", "null"] }
+      },
+       "required": ["Pattern"] // Adjust as needed
+    },
+    "Theme": {
+      "type": "object",
+      "properties": {
+        "Id": { "type": "integer" },
+        "Name": { "type": ["string", "null"] },
+        "Css": { "type": ["string", "null"] },
+        "Javascript": { "type": ["string", "null"] },
+        "Head": { "type": ["string", "null"] },
+        "Settings": {
+             "description": "Settings specific to the theme.",
+             "type": "object",
+             "additionalProperties": true
+         },
+        "TranslatedTexts": {
+           "description": "Translations related to the theme.",
+           "type": "object",
+           "additionalProperties": {
+              "type": "object",
+              "additionalProperties": { "type": "string" }
+            }
+         },
+         "ElementProperties": {
+            "description": "Properties specific to theme element types. Keys should be string representations of ThemeElementType.",
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": { "type": "string"}
+              // TODO: Define enum values for Acuity4.API.Enums.ThemeElementType if possible
+            }
+         }
+      },
+      "required": ["Id", "Name"] // Adjust as needed
+    },
+     "Question": {
+       "type": "object",
+       "properties": {
+         "Id": { "type": "integer" },
+         "Name": { "type": ["string", "null"] },
+         "Settings": {
+             "description": "Settings specific to the question.",
+             "type": "object",
+             "additionalProperties": true
+         },
+         "Type": {
+            "type": "string",
+            "description": "The type of the question."
+            // "enum": [...] // TODO: Define enum values for Acuity4.Model.SAT.Enums.QuestionTypes
+         },
+         "StyleId": { "type": ["integer", "null"] },
+         "TranslatedTexts": {
+             "description": "Translations for the question.",
+             "type": "object",
+             "additionalProperties": {
+                "type": "object",
+                "additionalProperties": { "type": "string" }
+              }
+         },
+         "PreLoadActions": {
+             "type": ["array", "null"],
+             "items": { "$ref": "#/definitions/QuestionAction"}
+         },
+         "PostAnswerActions": {
+             "type": ["array", "null"],
+             "items": { "$ref": "#/definitions/QuestionAction"}
+         },
+         "Variables": {
+             "type": ["array", "null"],
+             "items": { "$ref": "#/definitions/Variable"}
+         },
+         "Rows": {
+             "type": ["array", "null"],
+             "items": { "$ref": "#/definitions/Axis"}
+         },
+         "Columns": {
+              "type": ["array", "null"],
+              "items": { "$ref": "#/definitions/Axis"}
+         },
+         "VariableRandomization": { "$ref": "#/definitions/Randomization" },
+         "ChoiceListRandomization": { "$ref": "#/definitions/Randomization" },
+         "RowRandomization": { "$ref": "#/definitions/Randomization" },
+         "ColumnRandomization": { "$ref": "#/definitions/Randomization" },
+         "SkipLogic": { "type": ["string", "null"] },
+         "DisplayLogic": { "type": ["string", "null"] },
+         "LookupFilter": { "$ref": "#/definitions/LookupFilter" },
+         "IsPageBreak": { "type": "boolean" }
+       },
+       "required": ["Id", "Name", "Type", "IsPageBreak"] // Adjust as needed
+     },
+     "QuestionAction": {
+        "type": "object",
+        "properties": {
+           "Name": { "type": ["string", "null"] },
+           "Properties": {
+              "description": "Properties defining the action.",
+              "type": "object",
+              "additionalProperties": true
+           },
+           "Type": {
+              "type": "string",
+              "description": "The type of the question action."
+              // "enum": [...] // TODO: Define enum values for Acuity4.API.Enums.QuestionActionType
+           },
+           "Condition": { "type": ["string", "null"] },
+           "Selections": {
+               "type": ["array", "null"],
+               "items": { "$ref": "#/definitions/Selection"}
+           },
+           "SelectionVariables": {
+               "type": ["array", "null"],
+               "items": { "$ref": "#/definitions/SelectionVariable"}
+           }
+        },
+        "required": ["Name", "Type"] // Adjust as needed
+     },
+     "Variable": {
+        "type": "object",
+        "properties": {
+           "Id": { "type": "integer" },
+           "Name": { "type": ["string", "null"] },
+           "Type": {
+              "type": "string",
+              "description": "The type of the variable."
+              // "enum": [...] // TODO: Define enum values for Acuity4.API.Enums.VariableType
+           },
+           "DataType": {
+               "type": "string",
+               "description": "The data type of the variable."
+               // "enum": [...] // TODO: Define enum values for Acuity4.API.Enums.VariableDataType
+           },
+           "MaxMention": { "type": "integer" },
+           "Settings": {
+               "description": "Settings specific to the variable.",
+               "type": "object",
+               "additionalProperties": true
+           },
+           "SkipLogic": { "type": ["string", "null"] },
+           "DisplayLogic": { "type": ["string", "null"] },
+           "ChoiceListId": { "type": ["integer", "null"] },
+           "ChoiceListRandomization": { "$ref": "#/definitions/Randomization" },
+           "TranslatedTexts": {
+               "description": "Translations for the variable.",
+               "type": "object",
+               "additionalProperties": {
+                  "type": "object",
+                  "additionalProperties": { "type": "string" }
+                }
+           }
+        },
+        "required": ["Id", "Name", "Type", "DataType", "MaxMention"] // Adjust as needed
+     },
+     "Axis": {
+        "type": "object",
+        "properties": {
+           "Name": { "type": ["string", "null"] },
+           "Settings": {
+               "description": "Settings specific to the axis.",
+               "type": "object",
+               "additionalProperties": true
+           },
+           "TranslatedTexts": {
+               "description": "Translations for the axis.",
+               "type": "object",
+               "additionalProperties": {
+                  "type": "object",
+                  "additionalProperties": { "type": "string" }
+                }
+           },
+           "Type": { "type": ["string", "null"] },
+           "VariableIds": {
+                "type": ["array", "null"],
+                "items": { "type": "integer" }
+           },
+           "OpenEndDisplayIf": { "type": ["string", "null"] },
+           "SkipLogic": { "type": ["string", "null"] },
+           "DisplayLogic": { "type": ["string", "null"] }
+        },
+        "required": ["Name"] // Adjust as needed
+     },
+     "LookupFilter": {
+        "type": "object",
+        "properties": {
+           "Operator": { "type": ["string", "null"] },
+           "Syntax": { "type": ["string", "null"] },
+           "Conditions": {
+               "type": ["array", "null"],
+               "items": { "$ref": "#/definitions/Condition"}
+           }
+        },
+         "required": [] // Adjust as needed
+     },
+     "Selection": {
+        "type": "object",
+        "properties": {
+           "Value": { "type": ["string", "null"] },
+           "Condition": { "type": ["string", "null"] },
+           "Priority": { "type": ["string", "null"] },
+           "Score": { "type": ["string", "null"] }
+        },
+         "required": ["Value"] // Adjust as needed
+     },
+     "SelectionVariable": {
+        "type": "object",
+        "properties": {
+           "Name": { "type": ["string", "null"] },
+           "Mention": { "type": "integer", "default": 1 }
+        },
+         "required": ["Name", "Mention"] // Adjust as needed
+     },
+     "Condition": {
+         "type": "object",
+         "properties": {
+            "VariableName": { "type": ["string", "null"] },
+            "Operator": { "type": ["string", "null"] },
+            "Value": { "type": ["string", "null"] }
+         },
+          "required": ["VariableName", "Operator", "Value"] // Adjust as needed
+     }
+  }
+}

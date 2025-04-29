@@ -1,0 +1,40 @@
+{
+  "name": "surveybot",
+  "version": "1.0.0",
+  "description": "AI assistant for designing Voxco surveys",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "ts-node src/index.ts",
+    "dev": "nodemon --watch src --ext ts --exec ts-node src/index.ts"
+  },
+  "keywords": [
+    "ai",
+    "llm",
+    "pocketflow",
+    "voxco",
+    "survey"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@google/generative-ai": "^0.24.0",
+    "ajv": "^8.12.0",
+    "ajv-formats": "^3.0.1",
+    "dotenv": "^16.3.1",
+    "fast-json-patch": "^3.1.1",
+    "mammoth": "^1.6.0",
+    "node-fetch": "^2.7.0",
+    "openai": "^4.20.1",
+    "pocketflow": "latest",
+    "prompt-sync": "^4.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.4",
+    "@types/node-fetch": "^2.6.9",
+    "@types/prompt-sync": "^4.2.3",
+    "nodemon": "^3.0.2",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
+  }
+}

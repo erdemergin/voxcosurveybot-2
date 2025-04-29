@@ -1,0 +1,428 @@
+import { Node } from 'pocketflow'
+import { callLlm } from './utils/callLlm'
+import { QASharedStore } from './types'
+import PromptSync from 'prompt-sync'
+import { SharedMemory, Questionnaire } from "./types"
+import {
+  voxcoApiAuthenticate,
+  voxcoApiCreateSurvey,
+  voxcoApiImportSurvey,
+  voxcoApiSaveSurvey,
+} from "./utils/voxcoApi"
+import { readWordDocument } from "./utils/readWord"
+import { applyPatch, Operation } from 'fast-json-patch'
+import Ajv from "ajv"
+import addFormats from "ajv-formats"
+import questionnaireSchema from '../data/questionnare-schema.json'
+
+const prompt = PromptSync()
+const ajv = new Ajv({ allErrors: true })
+addFormats(ajv)
+const validateSchema = ajv.compile(questionnaireSchema)
+
+
+
+// --- InitializeSurvey Node --- 
+
+interface InitPrepResult {
+  type: 'scratch' | 'api' | 'word' | null
+  source?: string | Buffer | number | null
+  credentials?: { username: string, password: string }
+}
+
+export class InitializeSurvey extends Node<SharedMemory> {
+  async prep(shared: SharedMemory): Promise<InitPrepResult> {
+    if (!shared.initializationType) {
+      throw new Error("Initialization type not set in shared memory.")
+    }
+    if ((shared.initializationType === 'api' || shared.initializationType === 'word') && !shared.initializationSource) {
+       throw new Error(`Initialization source not set for type '${shared.initializationType}'.`)
+    }
+    if (shared.initializationType === 'api' && !shared.voxcoCredentials) {
+       throw new Error(`Voxco credentials not set for type 'api'.`)
+    }
+    
+    return {
+      type: shared.initializationType,
+      source: shared.initializationSource,
+      credentials: shared.voxcoCredentials
+    }
+  }
+
+  async exec(prepRes: InitPrepResult): Promise<Questionnaire | Error> {
+    try {
+      switch (prepRes.type) {
+        case 'scratch':
+          console.log("Initializing new survey from scratch...")
+          // Create a minimal valid Questionnaire object
+          const scratchSurvey: Questionnaire = {
+            id: null,
+            name: "New Survey from Bot",
+            version: 1,
+            useS2: false,
+            settings: {},
+            languages: ["en"],
+            defaultLanguage: "en",
+            blocks: [],
+            choiceLists: [],
+            translatedTexts: { en: {} },
+            theme: {}
+          }
+          return scratchSurvey
+
+        case 'api':
+          console.log(`Importing survey from Voxco API (ID: ${prepRes.source})...`)
+          if (!prepRes.credentials) throw new Error("Missing credentials for API import")
+          if (typeof prepRes.source !== 'number') throw new Error("Invalid Survey ID for API import")
+          
+          const apiToken = await voxcoApiAuthenticate(prepRes.credentials)
+          const importedSurvey = await voxcoApiImportSurvey(prepRes.source, apiToken)
+          console.log(`Successfully imported survey: ${importedSurvey.name}`)
+          return importedSurvey
+
+        case 'word':
+          console.log(`Initializing survey from Word document: ${prepRes.source}...`)
+          if (!prepRes.source || (typeof prepRes.source !== 'string' && !Buffer.isBuffer(prepRes.source))) {
+            throw new Error('Invalid source for Word document import.')
+          }
+          const wordText = await readWordDocument(prepRes.source)
+          console.log("Word document read, generating initial structure with LLM...")
+          // Call LLM to convert text to JSON structure
+          const prompt = `Convert the following survey text extracted from a Word document into a valid Voxco Questionnaire JSON structure. Set id to null. Ensure the output is ONLY the JSON object, without any explanations or markdown formatting. Text:\n\n${wordText}`
+          const llmResponse = await callLlm(prompt)
+          
+          try {
+             const wordSurvey: Questionnaire = JSON.parse(llmResponse)
+             // Basic validation or use AJV here too if needed
+             if (!wordSurvey || typeof wordSurvey.version !== 'number') {
+                throw new Error('LLM did not return a valid JSON structure.')
+             }
+             wordSurvey.id = null
+             if (!wordSurvey.name) wordSurvey.name = "Survey from Word"
+             console.log("Successfully generated initial structure from Word.")
+             return wordSurvey
+          } catch (parseError) {
+             console.error("Failed to parse LLM response for Word import:", llmResponse, parseError)
+             throw new Error("LLM response for Word import was not valid JSON.")
+          }
+
+        default:
+          throw new Error(`Unsupported initialization type: ${prepRes.type}`)
+      }
+    } catch (error) {
+        console.error("Error during survey initialization:", error)
+        return error instanceof Error ? error : new Error(String(error))
+    }
+  }
+
+  async post(shared: SharedMemory, prepRes: InitPrepResult, execRes: Questionnaire | Error): Promise<string> {
+    if (execRes instanceof Error) {
+      shared.errorMessage = `Initialization failed: ${execRes.message}`
+      return "error" // Transition to ErrorHandler node
+    } else {
+      shared.surveyJson = execRes
+      shared.errorMessage = null // Clear any previous error
+      console.log("Survey initialized successfully.")
+      return "default" // Transition to ChatAgent node
+    }
+  }
+}
+
+// --- ChatAgent Node --- 
+
+interface AgentPrepResult {
+  userMessage: string
+  currentSurveyJson: Questionnaire | null
+}
+
+interface AgentExecResult {
+  action: 'modify_survey' | 'save_survey' | 'exit' | 'display_response' | 'error'
+  patch?: Operation[]
+  errorMessage?: string
+  content?: string // Added for display_response
+}
+
+export class ChatAgent extends Node<SharedMemory> {
+  async prep(shared: SharedMemory): Promise<AgentPrepResult> {
+     if (!shared.currentUserMessage) {
+       // This might happen on the first run after initialization
+       // We can perhaps synthesize a first message or handle it in exec
+       console.log("ChatAgent: No user message found, awaiting input.")
+       // Or throw an error if a message is always expected here
+       // throw new Error("currentUserMessage is missing in shared memory for ChatAgent")
+       return { userMessage: "", currentSurveyJson: shared.surveyJson || null }
+     }
+     if (!shared.surveyJson) {
+        throw new Error("Survey JSON is missing in shared memory for ChatAgent")
+     }
+    // TODO: Implement more sophisticated context preparation if needed (e.g., summarizing survey)
+    return {
+      userMessage: shared.currentUserMessage,
+      currentSurveyJson: shared.surveyJson,
+    }
+  }
+
+  async exec(prepRes: AgentPrepResult): Promise<AgentExecResult> {
+    if (!prepRes.userMessage) {
+      // If prep allowed no message, just wait for the next loop
+      return { action: 'modify_survey' } // Loop back immediately to wait for input
+    }
+
+    // Basic intent check before LLM call for simple commands
+    const lowerCaseMessage = prepRes.userMessage.toLowerCase().trim()
+    if (lowerCaseMessage === 'save') {
+      return { action: 'save_survey' }
+    }
+    if (lowerCaseMessage === 'exit' || lowerCaseMessage === 'quit') {
+      return { action: 'exit' }
+    }
+
+    try {
+      // Prepare prompt for LLM
+      const prompt = `User wants to interact with a Voxco survey design assistant.
+Current Survey JSON: ${JSON.stringify(prepRes.currentSurveyJson, null, 2)}
+Schema of the Survey JSON: ${JSON.stringify(questionnaireSchema, null, 2)}
+User message: "${prepRes.userMessage}"
+
+Analyze the user message. Determine the intent: modify the survey, save the survey, display information about the survey, or exit.
+If modifying, generate a JSON Patch (RFC 6902) array to apply the change to the survey JSON. Ensure the patch is valid and targets existing paths where appropriate (unless adding).
+If displaying information (e.g., showing the current structure, answering a question about it), generate a text response for the user.
+If saving or exiting, respond with the action only.
+
+Output ONLY a JSON object containing the 'action' and associated data.
+Possible actions: 'modify_survey', 'save_survey', 'exit', 'display_response'.
+
+Examples:
+{ "action": "modify_survey", "patch": [ { "op": "replace", "path": "/name", "value": "New Survey Name" } ] }
+{ "action": "save_survey" }
+{ "action": "exit" }
+{ "action": "display_response", "content": "The survey currently has 5 questions in 2 blocks." }
+ `
+ 
+      const llmResponse = await callLlm(prompt)
+      let result: AgentExecResult
+      let jsonStringToParse = llmResponse.trim();
+      // console.debug("LLM response:", llmResponse)
+      // Attempt to strip markdown fences if present
+      const jsonMatch = jsonStringToParse.match(/```json\s*([\s\S]*?)\s*```/);
+      if (jsonMatch && jsonMatch[1]) {
+        jsonStringToParse = jsonMatch[1].trim();
+      } else {
+         // Fallback: sometimes LLMs might just output JSON without fences
+         // Check if it looks like a JSON object before attempting parse
+         if (!jsonStringToParse.startsWith('{') || !jsonStringToParse.endsWith('}')) {
+             console.error("LLM response does not appear to be JSON and lacks markdown fences:", llmResponse)
+             // Maybe try to handle as plain text display? Or return error.
+             // For now, let's try treating it as a display response if it's not JSON-like.
+             // If it was *supposed* to be JSON, the validation below will fail.
+             if (!['modify_survey', 'save_survey', 'exit'].includes(jsonStringToParse.toLowerCase())) {
+                  // Assuming it's free text if it doesn't look like JSON or a simple action
+                 return { action: 'display_response', content: llmResponse };
+             }
+             // Else, it might be a simple action string like 'save', let parsing fail naturally
+         }
+      }
+
+
+      try {
+        result = JSON.parse(jsonStringToParse)
+      } catch (parseError) {
+        console.error("Failed to parse LLM response in ChatAgent:", llmResponse, `(Tried parsing: ${jsonStringToParse})`, parseError)
+        // If parsing fails, maybe treat the original llmResponse as a display message?
+        // This avoids looping on errors if the LLM consistently fails to provide valid JSON.
+        return { action: 'display_response', content: `Assistant response could not be processed as a command. Raw response: ${llmResponse}` }
+        // Alternatively, return a specific error:
+        // return { action: 'error', errorMessage: `LLM response could not be parsed as valid JSON command. Raw response: ${llmResponse}` }
+      }
+      
+      // Validate LLM response structure
+      if (!result || !['modify_survey', 'save_survey', 'exit', 'display_response'].includes(result.action)) {
+          console.error("Invalid action received from LLM:", result)
+          return { action: 'error', errorMessage: "LLM returned an invalid action." }
+      }
+      if (result.action === 'modify_survey' && !Array.isArray(result.patch)) {
+          console.error("Missing or invalid patch received from LLM for modify action:", result)
+          return { action: 'error', errorMessage: "LLM returned modify action without a valid patch." }
+      }
+      if (result.action === 'display_response' && typeof result.content !== 'string') {
+          console.error("Missing or invalid content received from LLM for display action:", result)
+          return { action: 'error', errorMessage: "LLM returned display action without valid content." }
+      }
+ 
+      return result
+
+    } catch (error) {
+      console.error("Error during ChatAgent execution:", error)
+      const message = error instanceof Error ? error.message : String(error)
+      return { action: 'error', errorMessage: `ChatAgent failed: ${message}` }
+    }
+  }
+
+  async post(shared: SharedMemory, prepRes: AgentPrepResult, execRes: AgentExecResult): Promise<string> {
+    shared.currentUserMessage = null // Clear message after processing
+
+    if (execRes.action === 'error') {
+      shared.errorMessage = execRes.errorMessage || "Unknown error in ChatAgent."
+      return "error"
+    }
+
+    if (execRes.action === 'modify_survey') {
+      if (!execRes.patch || !shared.surveyJson) {
+         shared.errorMessage = "Modification failed: Patch or survey JSON missing."
+         console.error("Modify action returned from LLM exec, but patch or surveyJson missing in post.")
+         return "error"
+      }
+      try {
+        // IMPORTANT: Apply patch to a clone to validate before committing
+        const clonedSurvey = JSON.parse(JSON.stringify(shared.surveyJson))
+        const patchResult = applyPatch(clonedSurvey, execRes.patch)
+        
+        // Check if patching introduced errors (applyPatch might return errors or just modify in place)
+        // We rely on schema validation primarily
+        if (!patchResult || !patchResult.newDocument) {
+             throw new Error("JSON patch application failed internally.")
+        }
+
+        // Validate the *result* against the schema
+        const isValid = validateSchema(patchResult.newDocument)
+        if (!isValid) {
+          console.error("Schema validation failed after applying patch:", validateSchema.errors)
+          // Provide specific validation errors back to the user/LLM if possible
+          const validationErrors = ajv.errorsText(validateSchema.errors)
+          shared.errorMessage = `Modification failed: Resulting survey is invalid. Errors: ${validationErrors}`
+          // Optional: Inform user via console
+          console.log(`Modification rejected: Resulting survey is invalid. Errors: ${validationErrors}`)
+          // We loop back to the agent without changing the survey
+          return "modify_survey" 
+        }
+
+        // If patch and validation successful, update the shared state
+        shared.surveyJson = patchResult.newDocument as Questionnaire
+        shared.errorMessage = null // Clear error on success
+        console.log("Survey successfully modified.")
+        return "modify_survey" // Loop back for next user message
+
+      } catch (patchError) {
+        console.error("Error applying JSON patch or validating result:", patchError)
+        const message = patchError instanceof Error ? patchError.message : String(patchError)
+        shared.errorMessage = `Modification failed: ${message}`
+        // Don't transition to error node, just report via errorMessage and loop
+        console.log(`Modification rejected: Error applying patch - ${message}`)
+        return "modify_survey" // Loop back to agent
+      }
+    }
+
+    if (execRes.action === 'display_response') {
+      if (execRes.content) {
+         console.log("\nAssistant Response:\n---\n", execRes.content, "\n---")
+      }
+      return "modify_survey" // Loop back to agent for next user input
+    }
+
+    // For save_survey or exit, just return the action string
+    return execRes.action
+  }
+}
+
+// --- SaveToVoxco Node --- 
+
+interface SavePrepResult {
+  surveyJson: Questionnaire | null
+  credentials?: { username: string, password: string }
+}
+
+export class SaveToVoxco extends Node<SharedMemory> {
+  async prep(shared: SharedMemory): Promise<SavePrepResult> {
+    if (!shared.surveyJson) {
+      throw new Error("Cannot save: surveyJson is missing from shared memory.")
+    }
+     if (!shared.voxcoCredentials) {
+       throw new Error(`Cannot save: Voxco credentials not set.`)
+    }
+    return {
+      surveyJson: shared.surveyJson,
+      credentials: shared.voxcoCredentials
+    }
+  }
+
+  async exec(prepRes: SavePrepResult): Promise<boolean | Error> {
+    if (!prepRes.surveyJson) {
+        return new Error("Cannot save, survey JSON is missing.")
+    }
+    if (!prepRes.credentials) {
+        return new Error("Cannot save, Voxco credentials are missing.")
+    }
+
+    try {
+        const surveyToSave = prepRes.surveyJson
+        const token = await voxcoApiAuthenticate(prepRes.credentials)
+        let surveyId = surveyToSave.id;
+
+        if (surveyId === null) {
+            // First save for a new survey
+            console.log("Creating new survey on Voxco platform...")
+            const surveyName = surveyToSave.name || "Untitled Survey";
+            const createResult = await voxcoApiCreateSurvey(surveyName, token)
+            
+            if (typeof createResult.surveyId !== 'number') {
+                throw new Error(`Failed to get valid survey ID from create survey response: ${JSON.stringify(createResult)}`)
+            }
+            surveyId = createResult.surveyId;
+            surveyToSave.id = surveyId;
+            console.log(`New survey created with ID: ${surveyId}. Now saving content...`)
+        } else {
+            console.log(`Updating existing survey with ID: ${surveyId} on Voxco platform...`)
+        }
+        
+        if (typeof surveyId !== 'number') {
+             throw new Error("Survey ID is not valid for saving.");
+        }
+        
+        await voxcoApiSaveSurvey(surveyId, surveyToSave, token)
+        console.log(`Survey (ID: ${surveyId}) saved successfully.`)    
+        return true
+
+    } catch (error) {
+        console.error("Error during SaveToVoxco execution:", error)
+        return error instanceof Error ? error : new Error(String(error))
+    }
+  }
+
+  async post(shared: SharedMemory, prepRes: SavePrepResult, execRes: boolean | Error): Promise<string> {
+    if (execRes instanceof Error) {
+      shared.errorMessage = `Save failed: ${execRes.message}`
+      return "error"
+    } else {
+       shared.saveStatus = true
+       if (shared.surveyJson && prepRes.surveyJson?.id) {
+          shared.surveyJson.id = prepRes.surveyJson.id
+       }
+      shared.errorMessage = null
+      console.log("SaveToVoxco finished successfully.")
+      return "default"
+    }
+  }
+}
+
+// --- ErrorHandler Node --- 
+
+export class ErrorHandler extends Node<SharedMemory> {
+  async prep(shared: SharedMemory): Promise<string> {
+    return shared.errorMessage || "An unknown error occurred."
+  }
+
+  async exec(errorMessage: string): Promise<void> {
+    // Format and display the error to the user
+    console.error("\n--- An Error Occurred ---")
+    console.error(errorMessage)
+    console.error("-------------------------")
+    // Could potentially log the full error stack trace elsewhere
+  }
+
+  async post(shared: SharedMemory, prepRes: string, execRes: void): Promise<string> {
+    // Clear the error message after handling
+    shared.errorMessage = null
+    // Always transition back to the ChatAgent to allow the user to continue or exit
+    return "default" 
+  }
+}
