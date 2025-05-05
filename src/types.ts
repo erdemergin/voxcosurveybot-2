@@ -37,8 +37,9 @@ export interface ChatMessage {
 export interface SharedMemory {
   // --- Initialization Data ---
   initializationType: 'scratch' | 'api' | 'word' | null;
-  initializationSource?: string | Buffer | number | null; // e.g., surveyId for API, filePath/content for Word
+  initializationSource?: string | Buffer | number | null; // File path, buffer, or Voxco Survey ID
   voxcoCredentials?: { username: string, password: string }; // Raw credentials obtained via prompt (console) or env vars (production)
+  voxcoSurveyId: number | null; // Explicit ID of the survey on Voxco platform
 
   // --- Core Survey Data ---
   surveyJson?: Questionnaire | null; // The main survey object being built/modified

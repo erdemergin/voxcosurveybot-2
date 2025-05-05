@@ -78,11 +78,12 @@ async function main(): Promise<void> {
     try {
         const initialConfig = await getInitialSetup();
 
-        // Initialize shared memory
+        // Initialize shared memory based on args
         const shared: SharedMemory = {
             initializationType: initialConfig.initializationType || null,
             initializationSource: initialConfig.initializationSource,
             voxcoCredentials: initialConfig.voxcoCredentials,
+            voxcoSurveyId: null, // Initialize as null
             surveyJson: null,
             currentUserMessage: null,
             saveStatus: null,

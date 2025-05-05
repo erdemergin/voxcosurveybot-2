@@ -123,6 +123,16 @@ export class InitializeSurvey extends Node<SharedMemory> {
       shared.surveyJson = execRes
       shared.errorMessage = null // Clear any previous error
       console.log("Survey initialized successfully.")
+      
+      // If imported from API, store the Voxco Survey ID
+      if (prepRes.type === 'api' && typeof prepRes.source === 'number') {
+        shared.voxcoSurveyId = prepRes.source
+        console.log(`Stored Voxco Survey ID: ${shared.voxcoSurveyId}`)
+      } else {
+        // Ensure it's null for scratch, word, or if API import somehow lacked an ID
+        shared.voxcoSurveyId = null
+      }
+      
       return "default" // Transition to ChatAgent node
     }
   }
@@ -185,7 +195,7 @@ Schema of the Survey JSON: ${JSON.stringify(questionnaireSchema, null, 2)}
 User message: "${prepRes.userMessage}"
 
 Analyze the user message. Determine the intent: modify the survey, save the survey, display information about the survey, or exit.
-If modifying, generate a JSON Patch (RFC 6902) array to apply the change to the survey JSON. Ensure the patch is valid and targets existing paths where appropriate (unless adding).
+If modifying, generate a JSON Patch (RFC 6902) array to apply the change to the survey JSON. Ensure the patch is valid and targets existing paths where appropriate (unless adding). **IMPORTANT: When adding new elements (like blocks, questions, choices), DO NOT generate an 'id' field. Leave it out or set it to null.** The system will handle ID generation.
 If displaying information (e.g., showing the current structure, answering a question about it), generate a text response for the user.
 If saving or exiting, respond with the action only.
 
@@ -327,8 +337,9 @@ Examples:
 // --- SaveToVoxco Node --- 
 
 interface SavePrepResult {
-  surveyJson: Questionnaire | null
-  credentials?: { username: string, password: string }
+  surveyJson: Questionnaire
+  credentials: { username: string, password: string }
+  currentVoxcoSurveyId: number | null
 }
 
 export class SaveToVoxco extends Node<SharedMemory> {
@@ -339,48 +350,52 @@ export class SaveToVoxco extends Node<SharedMemory> {
      if (!shared.voxcoCredentials) {
        throw new Error(`Cannot save: Voxco credentials not set.`)
     }
+    // We pass the current voxcoSurveyId from shared memory
     return {
       surveyJson: shared.surveyJson,
-      credentials: shared.voxcoCredentials
+      credentials: shared.voxcoCredentials,
+      currentVoxcoSurveyId: shared.voxcoSurveyId
     }
   }
 
-  async exec(prepRes: SavePrepResult): Promise<boolean | Error> {
+  async exec(prepRes: SavePrepResult): Promise<number | Error> { // Returns survey ID on success
+    const surveyToSave = prepRes.surveyJson
+    const credentials = prepRes.credentials
+    const currentId = prepRes.currentVoxcoSurveyId
+
     if (!prepRes.surveyJson) {
-        return new Error("Cannot save, survey JSON is missing.")
+      return new Error("Cannot save, survey JSON is missing.")
     }
     if (!prepRes.credentials) {
         return new Error("Cannot save, Voxco credentials are missing.")
     }
 
     try {
-        const surveyToSave = prepRes.surveyJson
-        const token = await voxcoApiAuthenticate(prepRes.credentials)
-        let surveyId = surveyToSave.id;
+        const token = await voxcoApiAuthenticate(credentials)
+        let surveyIdToSave: number;
 
-        if (surveyId === null) {
+        if (currentId === null) {
             // First save for a new survey
             console.log("Creating new survey on Voxco platform...")
-            const surveyName = surveyToSave.name || "Untitled Survey";
+            const surveyName = surveyToSave.name || "Untitled Survey from Bot";
             const createResult = await voxcoApiCreateSurvey(surveyName, token)
             
             if (typeof createResult.surveyId !== 'number') {
                 throw new Error(`Failed to get valid survey ID from create survey response: ${JSON.stringify(createResult)}`)
             }
-            surveyId = createResult.surveyId;
-            surveyToSave.id = surveyId;
-            console.log(`New survey created with ID: ${surveyId}. Now saving content...`)
+            surveyIdToSave = createResult.surveyId;
+
+            console.log(`New survey created with ID: ${surveyIdToSave}. Now saving content...`)
         } else {
-            console.log(`Updating existing survey with ID: ${surveyId} on Voxco platform...`)
+            // Update existing survey
+            surveyIdToSave = currentId;
+            console.log(`Updating existing survey with ID: ${surveyIdToSave} on Voxco platform...`)
         }
         
-        if (typeof surveyId !== 'number') {
-             throw new Error("Survey ID is not valid for saving.");
-        }
-        
-        await voxcoApiSaveSurvey(surveyId, surveyToSave, token)
-        console.log(`Survey (ID: ${surveyId}) saved successfully.`)    
-        return true
+        // Perform the save/update operation
+        await voxcoApiSaveSurvey(surveyIdToSave, surveyToSave, token)
+        console.log(`Survey content (ID: ${surveyIdToSave}) saved successfully.`)    
+        return surveyIdToSave // Return the ID used for saving
 
     } catch (error) {
         console.error("Error during SaveToVoxco execution:", error)
@@ -388,18 +403,20 @@ export class SaveToVoxco extends Node<SharedMemory> {
     }
   }
 
-  async post(shared: SharedMemory, prepRes: SavePrepResult, execRes: boolean | Error): Promise<string> {
+  async post(shared: SharedMemory, prepRes: SavePrepResult, execRes: number | Error): Promise<string> {
     if (execRes instanceof Error) {
       shared.errorMessage = `Save failed: ${execRes.message}`
+      shared.saveStatus = false
       return "error"
     } else {
+       // execRes is the saved survey ID (number)
+       const savedSurveyId = execRes
        shared.saveStatus = true
-       if (shared.surveyJson && prepRes.surveyJson?.id) {
-          shared.surveyJson.id = prepRes.surveyJson.id
-       }
+       shared.voxcoSurveyId = savedSurveyId // Update shared memory with the definitive ID
+
       shared.errorMessage = null
-      console.log("SaveToVoxco finished successfully.")
-      return "default"
+      console.log(`SaveToVoxco finished successfully. Survey ID ${savedSurveyId} is stored.`)
+      return "default" // Or maybe back to agent? Depends on desired flow after save.
     }
   }
 }
