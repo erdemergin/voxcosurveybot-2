@@ -15,7 +15,7 @@ const genAI = apiKey ? new GoogleGenerativeAI(apiKey) : null
 
 const model = genAI
   ? genAI.getGenerativeModel({
-      model: 'gemini-2.5-pro-exp-03-25', // Or specify the exact version you used e.g., "gemini-2.5-pro-exp-03-25"
+      model: process.env.GEMINI_MODEL_NAME || 'gemini-2.5-pro-exp-03-25', // Or specify the exact version you used e.g., "gemini-2.5-pro-exp-03-25"
       // See https://ai.google.dev/docs/safety_setting_gemini for safety settings
       // safetySettings: [
       //   {
