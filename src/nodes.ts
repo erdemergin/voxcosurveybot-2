@@ -1,5 +1,5 @@
 import { Node } from 'pocketflow'
-import { callLlm } from './utils/callLlm'
+import { callLlm, callLlmStream } from './utils/callLlm'
 import { QASharedStore } from './types'
 import PromptSync from 'prompt-sync'
 import { SharedMemory, Questionnaire } from "./types"
@@ -101,7 +101,7 @@ ${JSON.stringify(questionnaireSchema, null, 2)}
 
 Key requirements for the JSON output based on the schema:
 1.  The entire output must be a single JSON object starting with '{' and ending with '}'.
-2.  The 'id' field in the root of the questionnaire MUST be null.
+2.  There MUST NOT be any 'id' field.
 3.  Ensure all strings are properly escaped.
 4.  All properties and nested structures must conform to the types and constraints defined in the schema above.
 
@@ -111,7 +111,17 @@ Survey Text to Convert:
 ${wordText}
 
 JSON Output:`
-          const llmResponse = await callLlm(prompt)
+          const llmResponseRaw = await callLlmStream(prompt)
+          let llmResponse = llmResponseRaw.trim();
+
+          // Attempt to strip markdown fences if present
+          const jsonMatch = llmResponse.match(/```json\s*([\s\S]*?)\s*```/);
+          if (jsonMatch && jsonMatch[1]) {
+            llmResponse = jsonMatch[1].trim();
+          } else {
+            // Fallback: if it doesn't have fences but isn't a valid JSON object start/end, it might be an error or plain text.
+            // However, for this specific prompt, we expect JSON. If it's not wrapped, we'll let JSON.parse try and fail.
+          }
           
           try {
              const wordSurvey: Questionnaire = JSON.parse(llmResponse)

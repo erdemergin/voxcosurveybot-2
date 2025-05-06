@@ -237,11 +237,46 @@
                 },
                 "type": {
                   "type": "string",
-                  "description": "Question type (e.g., RadioButton, CheckBox, etc.)"
+                  "description": "Question type",
+                  "enum": [
+                    "RadioButton",
+                    "DropDownList",
+                    "CheckBox",
+                    "Slider",
+                    "TextAnswer",
+                    "NumericAnswer",
+                    "EmailAddressAnswer",
+                    "DateTimeAnswer",
+                    "OpenEndAnswer",
+                    "ChoiceGrid",
+                    "RespondentLanguage",
+                    "RespondentTimeZone",
+                    "RespondentEmail",
+                    "Description"
+                  ]
                 },
                 "translatedTexts": {
                   "type": "object",
-                  "description": "Translated texts for the question"
+                  "description": "Translated texts for the question. Contains various text categories, each holding a map of language codes to the translated string content.",
+                  "properties": {
+                    "TITLE": {
+                      "$ref": "#/definitions/LanguageToStringMap"
+                    },
+                    "TEXT": {
+                      "$ref": "#/definitions/LanguageToStringMap"
+                    },
+                    "SHORT_TEXT": {
+                      "$ref": "#/definitions/LanguageToStringMap"
+                    }
+                  },
+                  "required": [
+                    "TITLE",
+                    "TEXT",
+                    "SHORT_TEXT"
+                  ],
+                  "additionalProperties": {
+                    "$ref": "#/definitions/LanguageToStringMap"
+                  }
                 },
                 "variables": {
                   "type": "array",
@@ -273,7 +308,8 @@
                         "type": "object",
                         "description": "Translated texts for the variable"
                       }
-                    }
+                    },
+                    "additionalProperties": false
                   }
                 },
                 "rows": {
@@ -354,11 +390,7 @@
         "type": "array",
         "items": {
           "type": "object",
-          "properties": {
-            "settings": {
-              "type": "object",
-              "description": "Choice settings"
-            },
+          "properties": {           
             "value": {
               "type": "string",
               "description": "Choice value"
@@ -369,7 +401,16 @@
             },
             "translatedTexts": {
               "type": "object",
-              "description": "Translated texts for the choice"
+              "description": "Translated texts for the choice. It contains a 'TEXT' property which maps language codes to translated strings.",
+              "properties": {
+                "TEXT": {
+                  "$ref": "#/definitions/LanguageToStringMap"
+                }
+              },
+              "required": [
+                "TEXT"
+              ],
+              "additionalProperties": false
             },
             "position": {
               "type": "integer",
@@ -597,5 +638,17 @@
     }
   },
   "required": [
-  ]
+  ],
+  "definitions": {
+    "LanguageToStringMap": {
+      "type": "object",
+      "description": "Represents a map of language codes (e.g., \"en\", \"fr\") to their corresponding translated strings. This can be an empty object if no translations are available for a specific text category.",
+      "patternProperties": {
+        "^[a-z]{2}(-[A-Z]{2})?$": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
 } 
