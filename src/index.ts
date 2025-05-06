@@ -140,7 +140,7 @@ async function main(): Promise<void> {
             console.log("Final survey state:");
             console.log(JSON.stringify(shared.surveyJson, null, 2));
             // Optionally save to a local file on exit
-             const finalFileName = `survey_${shared.surveyJson.id || 'local'}_final.json`;
+             const finalFileName = `output/survey_${shared.surveyJson.id || 'local'}_final.json`;
              await fs.writeFile(finalFileName, JSON.stringify(shared.surveyJson, null, 2));
              console.log(`Final survey JSON also saved locally to: ${finalFileName}`);
         }

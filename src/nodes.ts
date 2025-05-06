@@ -14,6 +14,7 @@ import { applyPatch, Operation } from 'fast-json-patch'
 import Ajv from "ajv"
 import addFormats from "ajv-formats"
 import questionnaireSchema from '../data/questionnare-schema.json'
+import * as fs from 'fs'
 
 const prompt = PromptSync()
 const ajv = new Ajv({ allErrors: true })
@@ -88,7 +89,28 @@ export class InitializeSurvey extends Node<SharedMemory> {
           const wordText = await readWordDocument(prepRes.source)
           console.log("Word document read, generating initial structure with LLM...")
           // Call LLM to convert text to JSON structure
-          const prompt = `Convert the following survey text extracted from a Word document into a valid Voxco Questionnaire JSON structure. Set id to null. Ensure the output is ONLY the JSON object, without any explanations or markdown formatting. Text:\n\n${wordText}`
+          const prompt = `You are an AI assistant that STRICTLY outputs a single, valid, complete, and parsable JSON object.
+Your entire response MUST be ONLY the JSON object. Do not include any other text, explanations, or markdown formatting.
+
+Convert the following survey text extracted from a Word document into a valid Voxco Questionnaire JSON structure, adhering strictly to the JSON schema provided below.
+
+Voxco Questionnaire JSON Schema:
+\`\`\`json
+${JSON.stringify(questionnaireSchema, null, 2)}
+\`\`\`
+
+Key requirements for the JSON output based on the schema:
+1.  The entire output must be a single JSON object starting with '{' and ending with '}'.
+2.  The 'id' field in the root of the questionnaire MUST be null.
+3.  Ensure all strings are properly escaped.
+4.  All properties and nested structures must conform to the types and constraints defined in the schema above.
+
+If the Voxco Questionnaire JSON schema is complex, ensure all nested structures, arrays, and objects are correctly formatted and complete according to the schema.
+
+Survey Text to Convert:
+${wordText}
+
+JSON Output:`
           const llmResponse = await callLlm(prompt)
           
           try {
@@ -103,7 +125,14 @@ export class InitializeSurvey extends Node<SharedMemory> {
              return wordSurvey
           } catch (parseError) {
              console.error("Failed to parse LLM response for Word import:", llmResponse, parseError)
-             throw new Error("LLM response for Word import was not valid JSON.")
+             const errorFileName = `llm_response_error_${Date.now()}.txt`
+             try {
+                fs.writeFileSync(errorFileName, llmResponse)
+                throw new Error(`LLM response for Word import was not valid JSON. Raw response saved to ${errorFileName}.`)
+             } catch (fileError) {
+                console.error(`Failed to write LLM response to ${errorFileName}:`, fileError)
+                throw new Error("LLM response for Word import was not valid JSON. Additionally, failed to save the raw response to a file.")
+             }
           }
 
         default:
