@@ -17,6 +17,30 @@ The primary goal of this system is to act as an AI assistant that collaborates w
 4.  **As a user, I want to interact with the system through a chat interface**, so I can iteratively add, remove, or modify questions, blocks, logic, and other survey elements by giving instructions in natural language.
 5.  **As a user, when I am satisfied with the survey design, I want to say "Save"**, so the system will take the generated JSON and import it into the Voxco platform using the appropriate API call.
 
+## Environment Variables and Configuration
+
+The application uses several environment variables for configuration. These can be set directly in the environment or via a `.env` file (loaded using dotenv).
+
+### Required Environment Variables
+
+1. **Google AI API Configuration**
+   - `GOOGLE_API_KEY`: API key for accessing Google's Generative AI services
+   - `GEMINI_MODEL_NAME`: (Optional) Specific Gemini model to use (defaults to 'gemini-2.5-pro-exp-03-25')
+
+2. **Voxco API Configuration**
+   - `VOXCO_API_BASE_URL`: Base URL for the Voxco API (e.g., 'https://beta7.voxco.com')
+   - `VOXCO_USERNAME`: (Optional) Username for Voxco API authentication
+   - `VOXCO_PASSWORD`: (Optional) Password for Voxco API authentication
+
+If credentials are not provided via environment variables, the application will prompt the user to enter them interactively when needed.
+
+### Configuration Notes
+
+- A warning will be displayed if `GOOGLE_API_KEY` is not set, as LLM calls will fail without it
+- The application will use the specified Gemini model or fall back to the default if not specified
+- Voxco API credentials can be provided either through environment variables or interactive prompts
+- All configuration is loaded at startup using the `dotenv.config()` call
+
 ## Flow Design
 
 > Notes for AI:
@@ -117,6 +141,40 @@ flowchart TD
     -   _Output_: Extracted text content (string) or a structured representation (object) of the document.
     -   _Necessity_: Used by `InitializeSurvey` node when `initializationType` is 'word'.
 
+7.  **`fast-json-patch`** (External library)
+    -   _Description_: A library that implements RFC 6902 JSON Patch operations for precise modifications to JSON objects.
+    -   _Input_: 
+        - `applyPatch(document, patches)`: Takes a target document and an array of patch operations
+        - `Operation` type: Defines the structure of JSON patch operations (add, remove, replace, etc.)
+    -   _Output_: Modified document after applying all patch operations
+    -   _Necessity_: Used by the `ChatAgent` node to apply structured modifications to the survey JSON based on LLM-generated patch operations.
+    -   _Reference_: [RFC 6902](https://datatracker.ietf.org/doc/html/rfc6902) (JSON Patch standard)
+
+8.  **Schema Validation with Ajv** (External library)
+    -   _Description_: A JSON Schema validator used to ensure the survey structure conforms to the defined schema in `data/questionnare-schema.json`.
+    -   _Input_: 
+        - JSON object to validate (the survey structure)
+        - Schema definition (loaded from `data/questionnare-schema.json`)
+    -   _Output_: 
+        - Boolean validation result
+        - Error objects containing detailed validation errors if validation fails
+    -   _Setup_:
+        ```typescript
+        const ajv = new Ajv({ allErrors: true });
+        addFormats(ajv); // Adds format validations (email, date-time, etc.)
+        const validateSchema = ajv.compile(questionnaireSchema);
+        ```
+    -   _Usage_:
+        ```typescript
+        const isValid = validateSchema(surveyJson);
+        if (!isValid) {
+          console.error("Validation errors:", validateSchema.errors);
+          // Handle validation failure
+        }
+        ```
+    -   _Necessity_: Used in the `ChatAgent` node to validate survey JSON after applying LLM-generated patches, ensuring the structure remains valid according to the Voxco questionnaire schema.
+    -   _Reference_: [Ajv Documentation](https://ajv.js.org/)
+
 ## Node Design
 
 ### Shared Memory
@@ -185,19 +243,37 @@ interface SharedMemory {
     *   _Purpose_: To create the initial `surveyJson` in the `SharedMemory` based on the user's chosen method (scratch, API import, or Word doc).
     *   _Type_: Node
     *   _Steps_:
-        *   `prep(shared: SharedMemory)`: Read `initializationType`, `initializationSource`, and potentially `voxcoCredentials` from `shared`.
+        *   `prep(shared: SharedMemory)`: 
+            * Validate that `initializationType` is set in shared memory
+            * For 'api' and 'word' types, confirm `initializationSource` is provided
+            * For 'api' type, ensure `voxcoCredentials` exists
+            * Return initialization parameters as a structured object
         *   `exec(prepRes)`: Perform the initialization based on `initializationType`:
-            *   If 'scratch': Create a minimal valid `Questionnaire` object in memory with `id = null`. Provide a default name (e.g., "New Survey").
+            *   If 'scratch': Create a minimal valid `Questionnaire` object with standard defaults (null ID, English language, empty blocks array, etc.)
             *   If 'api': 
                 1. Call `voxcoApiAuthenticate` using `voxcoCredentials` to get a token.
                 2. Call `voxcoApiImportSurvey` utility function with `initializationSource` (surveyId) and the obtained token.
+                3. Log confirmation of successful import
             *   If 'word': 
-                1. Call the `readWordDocument` utility function with `initializationSource` (file path/content).
-                2. Potentially call `callLlm` utility to convert the extracted text into an initial `Questionnaire` JSON structure, setting `id = null`.
-            *   Return the generated/fetched `Questionnaire` object or handle errors.
+                1. Call the `readWordDocument` utility function with `initializationSource` (file path/content)
+                2. Use `callLlmStream` to convert the extracted text into a JSON structure
+                3. Process the LLM response:
+                   - Strip markdown fences if present
+                   - Parse the JSON structure
+                   - Validate it contains required fields
+                   - Set ID to null and provide default name if needed
+                4. If JSON parsing fails:
+                   - Save the raw LLM response to a file for debugging
+                   - Throw a detailed error message
+            *   All errors are caught and returned from exec for handling in post
         *   `post(shared: SharedMemory, prepRes, execRes: Questionnaire | Error)`: 
             *   If `execRes` is an Error: Store error details in `shared.errorMessage`. Return `"error"` action.
-            *   If `execRes` is a valid `Questionnaire`: Write it to `shared.surveyJson`. Return `"default"` action.
+            *   If `execRes` is a valid `Questionnaire`: 
+               * Write it to `shared.surveyJson`
+               * Clear any previous errors
+               * For API imports, store the Voxco Survey ID in shared memory
+               * For other types, set Voxco Survey ID to null
+               * Return `"default"` action to proceed to ChatAgent
 
 2.  **ChatAgent Node**
 
