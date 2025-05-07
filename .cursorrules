@@ -174,7 +174,9 @@ Agentic Coding should be a collaboration between Human System Design and Agent I
 my-project/
 ├── src/
 │   ├── index.ts
-│   ├── nodes.ts
+│   ├── nodes/
+│       ├── node1.ts
+│       └── node2.ts
 │   ├── flow.ts
 │   ├── types.ts
 │   └── utils/
@@ -192,7 +194,8 @@ my-project/
   - It's recommended to dedicate one TypeScript file to each API call, for example `callLlm.ts` or `searchWeb.ts`.
   - Each file should export functions that can be imported elsewhere in the project
   - Include test cases for each utility function using `utilityFunctionName.test.ts`
-- **`src/nodes.ts`**: Contains all the node definitions.
+- **`src/nodes/`**: Contains all the node definitions.
+  - It is recommended to create one TypeScript file for each node.
 
   ```typescript
   // src/types.ts
