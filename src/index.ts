@@ -3,12 +3,14 @@ dotenv.config(); // Load .env variables
 
 import { SharedMemory } from "./types";
 import { createSurveyBotFlow } from "./flow";
-import { 
-    InitializeSurvey, 
-    ChatAgent, 
-    SaveToVoxco, 
-    ErrorHandler 
-} from "./nodes"; // Import node classes directly for manual execution
+import { InitializerRouter } from "./nodes/InitializerRouter"; 
+import { ScratchInitializer } from "./nodes/ScratchInitializer";
+import { ApiInitializer } from "./nodes/ApiInitializer";
+import { WordDocumentInitializer } from "./nodes/WordDocumentInitializer";
+import { ChatAgent } from "./nodes/ChatAgent"; 
+import { SaveToVoxco } from "./nodes/SaveToVoxco";
+import { ErrorHandler } from "./nodes/ErrorHandler";
+import { ParseWordToSurveyNode } from "./nodes/ParseWordToSurveyNode";
 import PromptSync from "prompt-sync";
 import fs from 'fs/promises';
 import path from 'path';
@@ -28,7 +30,11 @@ async function getInitialSetup(): Promise<Partial<SharedMemory>> {
         else console.log("Invalid choice.");
     }
 
-    let initializationSource: string | number | null = null;
+    let initializationSource: string | number | null | 
+        { type: 'new_voxco', surveyName: string } | 
+        { type: 'api_voxco', surveyId: number } | 
+        { type: 'local_scratch' } = null;
+
     if (initializationType === 'api') {
         while (initializationSource === null) {
             const surveyIdStr = prompt("Enter the Voxco Survey ID to import: ").trim();
@@ -40,37 +46,111 @@ async function getInitialSetup(): Promise<Partial<SharedMemory>> {
             }
         }
     } else if (initializationType === 'word') {
-        while (initializationSource === null) {
-            const filePath = prompt("Enter the path to the Word document (.docx): ").trim();
+        let filePath = null;
+        while (filePath === null) {
+            const path = prompt("Enter the path to the Word document (.docx): ").trim();
             try {
-                await fs.access(filePath);
-                initializationSource = filePath;
+                await fs.access(path);
+                filePath = path;
             } catch (err) {
-                console.log(`Error: File not found or inaccessible at path: ${filePath}`);
+                console.log(`Error: File not found or inaccessible at path: ${path}`);
             }
         }
-    }
-
-    // Get Credentials (using environment variables first, then prompt)
-    let username = process.env.VOXCO_USERNAME;
-    let password = process.env.VOXCO_PASSWORD;
-
-    if (!username) {
-        username = prompt("Enter Voxco Username: ", { echo: '*' });
-    }
-    if (!password) {
-        password = prompt("Enter Voxco Password: ", { echo: '*' });
-    }
-
-    if (!username || !password) {
-        throw new Error("Voxco credentials are required.");
+        
+        // Ask about the base survey for Word import
+        let baseChoice = null;
+        while (baseChoice === null) {
+            const choice = prompt("Import Word document into: (1) New Voxco survey, (2) Existing Voxco survey, (3) Local scratch survey [1/2/3]: ").trim();
+            if (choice === '1') {
+                const surveyName = prompt("Enter name for the new survey: ").trim();
+                if (surveyName) {
+                    initializationSource = {
+                        type: 'new_voxco' as const,
+                        surveyName
+                    };
+                    baseChoice = choice;
+                } else {
+                    console.log("Survey name cannot be empty.");
+                }
+            } else if (choice === '2') {
+                const surveyIdStr = prompt("Enter the existing Voxco Survey ID: ").trim();
+                const surveyId = parseInt(surveyIdStr, 10);
+                if (!isNaN(surveyId) && surveyId > 0) {
+                    initializationSource = {
+                        type: 'api_voxco' as const,
+                        surveyId
+                    };
+                    baseChoice = choice;
+                } else {
+                    console.log("Invalid Survey ID. Please enter a positive number.");
+                }
+            } else if (choice === '3') {
+                initializationSource = {
+                    type: 'local_scratch' as const
+                };
+                baseChoice = choice;
+            } else {
+                console.log("Invalid choice.");
+            }
+        }
+        
+        // For Word documents, we need to store both the import config and the file path
+        // Store the file path in initializationSource
+        const wordFilePath = filePath;
+        // We'll save the original object temporarily
+        const importConfig = initializationSource;
+        // Then set initializationSource to the file path
+        initializationSource = wordFilePath;
+        
+        // We'll store the import config in shared directly when setting up shared memory
+        return {
+            initializationType,
+            initializationSource,
+            wordDocumentText: null, // Initialize for future use
+            voxcoCredentials: await getCredentials(initializationType, importConfig),
+            wordImportBaseDetails: importConfig
+        };
     }
 
     return {
         initializationType,
         initializationSource,
-        voxcoCredentials: { username, password }
+        voxcoCredentials: await getCredentials(initializationType, initializationSource)
     };
+}
+
+// Helper function to get credentials
+async function getCredentials(
+    initType: 'scratch' | 'api' | 'word' | null,
+    source: any
+): Promise<{ username: string, password: string } | undefined> {
+    // Get Credentials (using environment variables first, then prompt)
+    let username = process.env.VOXCO_USERNAME;
+    let password = process.env.VOXCO_PASSWORD;
+
+    // If using Voxco API or importing Word into Voxco, we need credentials
+    const needsCredentials = initType === 'api' || 
+                            (initType === 'word' && 
+                             source && 
+                             typeof source === 'object' &&
+                             (source.type === 'new_voxco' || source.type === 'api_voxco'));
+
+    if (needsCredentials) {
+        if (!username) {
+            username = prompt("Enter Voxco Username: ");
+        }
+        if (!password) {
+            password = prompt("Enter Voxco Password: ", { echo: '*' });
+        }
+
+        if (!username || !password) {
+            throw new Error("Voxco credentials are required for this operation.");
+        }
+        
+        return { username, password };
+    }
+    
+    return undefined;
 }
 
 // Main application logic
@@ -83,21 +163,51 @@ async function main(): Promise<void> {
             initializationType: initialConfig.initializationType || null,
             initializationSource: initialConfig.initializationSource,
             voxcoCredentials: initialConfig.voxcoCredentials,
-            voxcoSurveyId: null, // Initialize as null
+            wordDocumentText: initialConfig.wordDocumentText,
+            activeVoxcoSurveyId: null, // Survey ID for Voxco operations
             surveyJson: null,
             currentUserMessage: null,
             saveStatus: null,
             errorMessage: null,
+            wordImportBaseDetails: initialConfig.wordImportBaseDetails
         };
 
         // Create node instances (needed for manual execution loop)
-        const initNode = new InitializeSurvey();
+        const routerNode = new InitializerRouter();
+        const scratchNode = new ScratchInitializer();
+        const apiNode = new ApiInitializer();
+        const wordNode = new WordDocumentInitializer();
+        const parseWordNode = new ParseWordToSurveyNode();
         const agentNode = new ChatAgent();
         const saveNode = new SaveToVoxco();
         const errorNode = new ErrorHandler();
 
-        console.log("\nInitializing survey...");
-        let nextAction = await initNode.run(shared); // Run initialization
+        console.log("\nRouting initialization process...");
+        // First use the router to determine which initializer to use
+        let initializerType = await routerNode.run(shared);
+        
+        // Run the appropriate initializer based on type
+        let nextAction;
+        if (initializerType === 'scratch') {
+            console.log("\nInitializing survey from scratch...");
+            nextAction = await scratchNode.run(shared);
+        } else if (initializerType === 'api') {
+            console.log("\nInitializing survey from Voxco API...");
+            nextAction = await apiNode.run(shared);
+        } else if (initializerType === 'word') {
+            console.log("\nInitializing survey from Word document...");
+            nextAction = await wordNode.run(shared);
+            
+            // Handle word parsing if needed
+            if (nextAction === 'word_ready_for_parsing') {
+                console.log("\nParsing Word document...");
+                nextAction = await parseWordNode.run(shared);
+            }
+        } else if (initializerType === 'error') {
+            nextAction = 'error';
+        } else {
+            throw new Error(`Unknown initialization type: ${initializerType}`);
+        }
 
         // Main interaction loop
         console.log("\nEnter your instructions to modify the survey (e.g., 'Add a question', 'Change the survey name to X', 'Save', 'Exit').");
@@ -118,7 +228,7 @@ async function main(): Promise<void> {
                 continue; // Go back to start of loop to handle save result (error or default)
             }
 
-            // If action is 'default' (from Init, Save, Error) or 'modify_survey' (from Agent loop)
+            // If action is 'default' (from Init, ParseWord, Save, Error) or 'modify_survey' (from Agent loop)
             // We need user input to proceed with the ChatAgent
             const userInput = prompt("> ").trim();
 
@@ -140,7 +250,7 @@ async function main(): Promise<void> {
             console.log("Final survey state:");
             console.log(JSON.stringify(shared.surveyJson, null, 2));
             // Optionally save to a local file on exit
-             const finalFileName = `output/survey_${shared.surveyJson.id || 'local'}_final.json`;
+             const finalFileName = `output/survey_${shared.activeVoxcoSurveyId || 'local'}_final.json`;
              await fs.writeFile(finalFileName, JSON.stringify(shared.surveyJson, null, 2));
              console.log(`Final survey JSON also saved locally to: ${finalFileName}`);
         }

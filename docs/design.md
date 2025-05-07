@@ -52,33 +52,88 @@ If credentials are not provided via environment variables, the application will 
 
 -   **Agent**: The core interaction is a chat-based loop where the user iteratively modifies the survey. The AI agent takes user input (chat message) and the current survey state (JSON) as context and decides whether to modify the survey or save it.
 
+### Initial User Choice for Word Import (Pre-Flow Application Logic)
+
+For the "Word document import" option, the application (before starting the main PocketFlow flow) will:
+1.  Prompt the user to select the "Word document import" option.
+2.  If selected, ask whether the content from the Word document should be imported into:
+    *   A **brand new survey** to be created on Voxco (user provides a name).
+    *   An **existing survey** to be loaded from Voxco (user provides Survey ID).
+    *   A **local scratch survey** (not immediately pushed to Voxco).
+3.  Prompt for the path to the Word document.
+4.  This information (base choice, Word file path) will be stored in `SharedMemory` (`shared.wordImportBaseDetails`, `shared.initializationSource`) before the `InitializerRouter` node is run.
+
 ### Flow high-level Design:
 
-The flow starts by initializing the survey based on user input (scratch, API import, or Word doc). Then, it enters an agentic loop where the user interacts via chat to modify the survey structure held in the shared store. When the user indicates they want to save (e.g., says "Save"), the flow proceeds to save the current survey JSON to the Voxco platform via an API call and then returns to the chat agent for further modifications. The flow only terminates when the user explicitly asks to exit.
+The flow begins with an initializer router that directs the flow based on the initialization type. For 'scratch' or 'api' types, a survey is created or loaded accordingly. For 'word' type, the Word document is read and parsed into a survey structure. After initialization, the flow enters an agentic loop where the user interacts via chat to modify the survey. When the user says "Save", the flow saves the survey to Voxco and returns to the chat agent. The flow only terminates when the user explicitly asks to exit.
 
-1.  **InitializeSurvey Node**: Determines the starting point (scratch, API import, Word doc) and prepares the initial survey JSON in the shared store.
-2.  **ChatAgent Node**: Manages the interactive chat loop.
-        -   _Context_: User's chat message, current survey JSON. (Note: Chat history passed to the LLM in `exec` should be managed to stay concise, e.g., by clearing it in `post` after each successful modification).
+1.  **InitializerRouter Node**: Routes to the appropriate initializer based on initialization type.
+    * Reads `shared.initializationType` ('scratch', 'api', or 'word')
+    * Returns the corresponding action to route to the appropriate initializer
+
+2.  **ScratchInitializer Node**: Creates a new empty survey structure.
+    * Creates a minimal valid Questionnaire object
+    * Sets `shared.surveyJson` and `shared.activeVoxcoSurveyId = null`
+    * Transitions to `ChatAgent`
+
+3.  **ApiInitializer Node**: Imports an existing survey from Voxco API.
+    * Authenticates with Voxco API
+    * Imports survey using provided survey ID
+    * Sets `shared.surveyJson` and `shared.activeVoxcoSurveyId`
+    * Transitions to `ChatAgent`
+
+4.  **WordDocumentInitializer Node**: Handles the setup for Word document import.
+    * Establishes a base survey based on `shared.wordImportBaseDetails`:
+      - For 'new_voxco': Creates a new survey on Voxco
+      - For 'api_voxco': Imports existing survey from Voxco
+      - For 'local_scratch': Creates a local scratch survey
+    * Reads the Word document content
+    * Transitions to `ParseWordToSurveyNode`
+
+5.  **ParseWordToSurveyNode**: Processes Word document content into survey structure.
+    *   Takes the base survey JSON and the Word document text from shared memory.
+    *   Uses an LLM to parse the Word document into logical survey chunks (blocks, questions).
+    *   Uses another LLM (iteratively for each chunk) to convert these chunks into JSON Patch operations.
+    *   Applies these patches to the survey JSON, validating against the schema after each application.
+    *   Transitions to `ChatAgent`.
+
+6.  **ChatAgent Node**: Manages the interactive chat loop.
+    -   _Context_: User's chat message, current survey JSON.
     -   _Actions_:
-        -   `modify_survey`: Updates the survey JSON based on user instructions. **Crucially, the node should clear/reset the chat history in the shared store before looping back via this action.** This ensures the next iteration starts fresh, keeping the context passed to the LLM small.
+        -   `modify_survey`: Updates the survey JSON based on user instructions.
         -   `save_survey`: Proceeds to the SaveToVoxco node.
         -   `exit`: Terminates the flow.
-3.  **SaveToVoxco Node**: Takes the final survey JSON from the shared store and calls the Voxco API utility function to save it.
-4.  **ErrorHandler Node**: Processes errors stored in `shared.errorMessage`, informs the user via chat, and returns to the `ChatAgent`.
+
+7.  **SaveToVoxco Node**: Takes the final survey JSON from the shared store and calls the Voxco API utility function to save it.
+
+8.  **ErrorHandler Node**: Processes errors stored in `shared.errorMessage`, informs the user via chat, and returns to the `ChatAgent`.
 
 ```mermaid
 flowchart TD
     subgraph Main Flow
         direction LR
-        Start --> Init[InitializeSurvey]
-        Init -- default --> Agent{ChatAgent}
+        Start --> Router[InitializerRouter]
+        
+        Router -- scratch --> Scratch[ScratchInitializer]
+        Router -- api --> Api[ApiInitializer]
+        Router -- word --> Word[WordDocumentInitializer]
+        
+        Scratch -- default --> Agent{ChatAgent}
+        Api -- default --> Agent
+        Word -- word_ready_for_parsing --> ParseWord[ParseWordToSurveyNode]
+        
+        ParseWord -- default --> Agent
+        ParseWord -- error --> Err[ErrorHandler]
+
         Agent -- modify_survey --> Agent
         Agent -- save_survey --> Save[SaveToVoxco]
         Save -- default --> Agent
         Agent -- exit --> End[End]
 
-        Init -- error --> Err[ErrorHandler]
-        Agent -- error --> Err
+        Router -- error --> Err
+        Scratch -- error --> Err
+        Api -- error --> Err
+        Word -- error --> Err
         Save -- error --> Err
         Err -- default --> Agent
     end
@@ -181,7 +236,7 @@ flowchart TD
 
 > Notes for AI: Try to minimize data redundancy
 
-*   **Startup Configuration:** Before the flow starts, the application (running in the console) will interactively prompt the user to determine the `initializationType` ('scratch', 'api', 'word'). Based on this, it will prompt for the necessary `initializationSource` (survey ID for 'api', file path for 'word') and the `voxcoCredentials` (username and password). **Note:** While interactive prompts are used here for simplicity in the console version, a production system should use a more secure method like environment variables (`VOXCO_USERNAME`, `VOXCO_PASSWORD`) for credentials. This initial data will be used to populate the `SharedMemory` before running the `InitializeSurvey` node.
+*   **Startup Configuration:** Before the flow starts, the application (running in the console) will interactively prompt the user to determine the `initializationType` ('scratch', 'api', 'word'). Based on this, it will prompt for the necessary `initializationSource` (survey ID for 'api', file path for 'word') and the `voxcoCredentials` (username and password). **Note:** While interactive prompts are used here for simplicity in the console version, a production system should use a more secure method like environment variables (`VOXCO_USERNAME`, `VOXCO_PASSWORD`) for credentials. This initial data will be used to populate the `SharedMemory` before running the `InitializerRouter` node.
 
 The shared memory structure will hold the state needed across the nodes. Its structure is based on the flow requirements and the `data/questionnare-schema.json` for the survey object itself.
 
@@ -221,9 +276,23 @@ interface SharedMemory {
   initializationType: 'scratch' | 'api' | 'word' | null;
   initializationSource?: string | Buffer | number | null; // e.g., surveyId for API, filePath/content for Word
   voxcoCredentials?: { username: string, password: string }; // Raw credentials obtained via prompt (console) or env vars (production)
+  // NEW: Details for how to establish the base survey for Word import
+  wordImportBaseDetails?: { 
+    type: 'new_voxco', 
+    surveyName: string // Name for the new survey on Voxco
+  } | { 
+    type: 'api_voxco', 
+    surveyId: number 
+  } | { 
+    type: 'local_scratch' 
+  };
+  // NEW: To store the text content of the Word document
+  wordDocumentText?: string | null;
 
   // --- Core Survey Data --- 
-  surveyJson?: Questionnaire | null; // The main survey object being built/modified
+  surveyJson?: Questionnaire | null; // The main survey object being built/modified. Its 'id' field will store the Voxco Survey ID if applicable.
+  // NEW: Authoritative Survey ID for Voxco operations
+  activeVoxcoSurveyId?: number | null; // Stores the Voxco Survey ID if the survey exists on the platform, otherwise null.
 
   // --- Chat Agent State --- 
   currentUserMessage?: string | null; // The latest message from the user
@@ -238,100 +307,181 @@ interface SharedMemory {
 
 > Notes for AI: Carefully decide whether to use Batch/Node/Flow. Use regular Nodes unless batch processing is explicitly needed.
 
-1.  **InitializeSurvey Node**
+1.  **InitializerRouter Node**
 
-    *   _Purpose_: To create the initial `surveyJson` in the `SharedMemory` based on the user's chosen method (scratch, API import, or Word doc).
-    *   _Type_: Node
-    *   _Steps_:
-        *   `prep(shared: SharedMemory)`: 
+    * _Purpose_: To examine the initialization type and route to the appropriate initializer node.
+    * _Type_: Node
+    * _Steps_:
+        * `prep(shared: SharedMemory)`:
             * Validate that `initializationType` is set in shared memory
-            * For 'api' and 'word' types, confirm `initializationSource` is provided
-            * For 'api' type, ensure `voxcoCredentials` exists
-            * Return initialization parameters as a structured object
-        *   `exec(prepRes)`: Perform the initialization based on `initializationType`:
-            *   If 'scratch': Create a minimal valid `Questionnaire` object with standard defaults (null ID, English language, empty blocks array, etc.)
-            *   If 'api': 
-                1. Call `voxcoApiAuthenticate` using `voxcoCredentials` to get a token.
-                2. Call `voxcoApiImportSurvey` utility function with `initializationSource` (surveyId) and the obtained token.
-                3. Log confirmation of successful import
-            *   If 'word': 
-                1. Call the `readWordDocument` utility function with `initializationSource` (file path/content)
-                2. Use `callLlmStream` to convert the extracted text into a JSON structure
-                3. Process the LLM response:
-                   - Strip markdown fences if present
-                   - Parse the JSON structure
-                   - Validate it contains required fields
-                   - Set ID to null and provide default name if needed
-                4. If JSON parsing fails:
-                   - Save the raw LLM response to a file for debugging
-                   - Throw a detailed error message
-            *   All errors are caught and returned from exec for handling in post
-        *   `post(shared: SharedMemory, prepRes, execRes: Questionnaire | Error)`: 
-            *   If `execRes` is an Error: Store error details in `shared.errorMessage`. Return `"error"` action.
-            *   If `execRes` is a valid `Questionnaire`: 
-               * Write it to `shared.surveyJson`
-               * Clear any previous errors
-               * For API imports, store the Voxco Survey ID in shared memory
-               * For other types, set Voxco Survey ID to null
-               * Return `"default"` action to proceed to ChatAgent
+            * Return the initialization type
+        * `exec(initializationType: 'scratch' | 'api' | 'word')`:
+            * Simply return the initialization type (no processing needed)
+        * `post(shared: SharedMemory, prepRes, execRes: string)`:
+            * Return the initialization type as the action for routing
 
-2.  **ChatAgent Node**
+2.  **ScratchInitializer Node**
 
-    *   _Purpose_: To manage the iterative chat interaction with the user, modifying the survey based on their instructions.
-    *   _Type_: Node
-    *   _Steps_:
-        *   `prep(shared: SharedMemory)`: Read `shared.currentUserMessage` and `shared.surveyJson`. Prepare a concise context for the LLM (current message + potentially a summary or key parts of the survey JSON, not necessarily the whole thing).
-        *   `exec(prepRes)`: Call the `callLlm` utility function with the prepared context and a prompt instructing it to:
-            1.  Analyze the user message (`currentUserMessage`).
-            2.  Determine the user's intent (modify survey, save, exit).
-            3.  If modifying, generate a **JSON Patch operation** (see RFC 6902) representing the requested change to the survey JSON.
-            4.  If the user asks to see the structure or asks a question about it, generate a text response.
-            5.  Output a structured response indicating the action (`modify_survey`, `save_survey`, `exit`, `display_response`) and the corresponding data (patch operation for `modify_survey`, text content for `display_response`). Example output structure: `{ action: 'modify_survey', patch: [...] }` or `{ action: 'display_response', content: '...' }`.
-        *   `post(shared: SharedMemory, prepRes, execRes: { action: string, patch?: any[], content?: string })`: 
-            *   Based on `execRes.action`:
-                *   If `modify_survey`:
-                    1. Validate the received `execRes.patch` format.
-                    2. **Attempt to apply the `execRes.patch` to the current `shared.surveyJson`.**
-                    3. **Validate the _resulting* survey JSON against the schema defined in `data/questionnare-schema.json`.** This ensures the survey remains valid after the patch.
-                    4. If patch application and schema validation are successful: Update `shared.surveyJson` with the patched version. 
-                    5. **Crucially, print a confirmation message to the console (e.g., "Survey updated successfully.").**
-                    6. If patch application or validation fails: Do not update `shared.surveyJson`. Store a relevant error (invalid patch, invalid result) in `shared.errorMessage`. (Consider adding a message back to the user via chat history indicating the failure).
-                    7. Return the `modify_survey` action (loops back).
-                *   If `save_survey`: Return the `save_survey` action.
-                *   If `exit`: Return the `exit` action.
-                *   If `display_response`:
-                    1. Print `execRes.content` to the console.
-                    2. Return the `modify_survey` action (loops back).
-                *   If an error occurred during `exec` (e.g., LLM call failure): Store the error in `shared.errorMessage`. Return `"error"` action.
+    * _Purpose_: To create a minimal valid survey structure from scratch.
+    * _Type_: Node
+    * _Steps_:
+        * `prep(shared: SharedMemory)`:
+            * No real prep needed, just validate shared memory is available
+            * Return an empty object or null
+        * `exec(prepRes)`:
+            * Create a minimal valid `Questionnaire` object with standard defaults:
+                * `id: null`
+                * Default name "New Survey from Bot"
+                * Default version 1
+                * Default language "en"
+                * Empty blocks array
+                * Empty choiceLists array
+                * Basic translatedTexts with English
+            * Return this new `Questionnaire`
+        * `post(shared: SharedMemory, prepRes, execRes: Questionnaire | Error)`:
+            * If `execRes` is an Error: Store error in `shared.errorMessage`. Return `"error"` action.
+            * Otherwise: Store `execRes` in `shared.surveyJson`, set `shared.activeVoxcoSurveyId` to `null`, and return `"default"` action.
 
-3.  **SaveToVoxco Node**
+3.  **ApiInitializer Node**
 
-    *   _Purpose_: To save the final survey design to the Voxco platform using the API. Handles both creating new surveys on Voxco and updating existing ones.
-    *   _Type_: Node
-    *   _Steps_:
-        *   `prep(shared: SharedMemory)`: Read `shared.surveyJson` and `shared.voxcoCredentials` (or token if stored).
-        *   `exec(prepRes)`: 
-            1. Check if `shared.surveyJson.id` is `null`.
-            2. Call `voxcoApiAuthenticate` using `voxcoCredentials` to get a fresh token.
-            3. If `shared.surveyJson.id` is `null` (first save for new survey):
-                a. Call `voxcoApiCreateSurvey` using a name from `shared.surveyJson.name` (or a default) and the obtained token.
-                b. Parse the new `surveyId` from the response's `Location` header.
-                c. Update `shared.surveyJson.id` with this new `surveyId`.
-                d. Call `voxcoApiSaveSurvey` using the *new* `surveyId`, the `shared.surveyJson` content, and the obtained token.
-            4. If `shared.surveyJson.id` has a value (updating existing survey):
-                a. Call `voxcoApiSaveSurvey` using the existing `shared.surveyJson.id`, the `shared.surveyJson` content, and the obtained token.
-            5. Return the success status or error from the save/create+save operation.
-        *   `post(shared: SharedMemory, prepRes, execRes: boolean | string | Error)`: 
-            *   If `execRes` indicates an error: Store error details in `shared.errorMessage`. Return `"error"` action.
-            *   If `execRes` indicates success: Write success status to `shared.saveStatus`. Return `"default"` action.
+    * _Purpose_: To import an existing survey from the Voxco platform via its API.
+    * _Type_: Node
+    * _Steps_:
+        * `prep(shared: SharedMemory)`:
+            * Validate that `initializationSource` (surveyId) exists
+            * Validate that `voxcoCredentials` exists
+            * Return these values as a structured object
+        * `exec(prepRes: { source: number, credentials: { username: string, password: string } })`:
+            * Call `voxcoApiAuthenticate` using `prepRes.credentials` to get a token
+            * Call `voxcoApiImportSurvey` with `prepRes.source` (surveyId) and the token
+            * Return the imported `Questionnaire`
+        * `post(shared: SharedMemory, prepRes, execRes: Questionnaire | Error)`:
+            * If `execRes` is an Error: Store error in `shared.errorMessage`. Return `"error"` action.
+            * Otherwise:
+                * Store `execRes` in `shared.surveyJson`
+                * Set `shared.activeVoxcoSurveyId` to the imported surveyId
+                * Return `"default"` action
 
-4.  **ErrorHandler Node**
+4.  **WordDocumentInitializer Node**
 
-    *   _Purpose_: To process errors stored in `shared.errorMessage`, inform the user via chat, and return control to the `ChatAgent`.
-    *   _Type_: Node
-    *   _Steps_:
-        *   `prep(shared: SharedMemory)`: Read `shared.errorMessage`.
-        *   `exec(errorMessage: string)`: Format the error message for user display (e.g., simplify technical details), **print it to the console**, and log the full error if needed.
-        *   `post(shared: SharedMemory, prepRes, execRes: string)`:
-            *   Clear `shared.errorMessage`.
-            *   Return `"default"` action (transitions back to `ChatAgent`).
+    * _Purpose_: To set up a base survey and read a Word document for subsequent parsing.
+    * _Type_: Node
+    * _Steps_:
+        * `prep(shared: SharedMemory)`:
+            * Validate that `initializationSource` (Word file path) exists
+            * Validate that `wordImportBaseDetails` exists
+            * For 'new_voxco' or 'api_voxco' types, validate that `voxcoCredentials` exists
+            * Return these values as a structured object
+        * `exec(prepRes)`:
+            * **Establish Base Survey**:
+                * If `prepRes.wordImportBaseDetails.type === 'new_voxco'`:
+                    * Call `voxcoApiAuthenticate` utility using credentials
+                    * Call `voxcoApiCreateSurvey` utility (with surveyName and token)
+                    * Store the new survey ID in a class property
+                    * Create a minimal `Questionnaire` object
+                * If `prepRes.wordImportBaseDetails.type === 'api_voxco'`:
+                    * Call `voxcoApiAuthenticate` utility using credentials
+                    * Call `voxcoApiImportSurvey` utility (with surveyId and token)
+                    * Store the surveyId in a class property
+                * If `prepRes.wordImportBaseDetails.type === 'local_scratch'`:
+                    * Create a minimal valid `Questionnaire` object
+            * **Read Word Document**:
+                * Call `readWordDocument` utility with the file path/content
+            * Return `{ baseSurvey: baseSurveyJson, textFromWord: wordText }`
+        * `post(shared: SharedMemory, prepRes, execRes: { baseSurvey: Questionnaire, textFromWord: string } | Error)`:
+            * If `execRes` is an Error: Store error in `shared.errorMessage`. Return `"error"` action.
+            * Otherwise:
+                * Store `execRes.baseSurvey` in `shared.surveyJson`
+                * Store `execRes.textFromWord` in `shared.wordDocumentText`
+                * Set `shared.activeVoxcoSurveyId` based on the wordImportBaseDetails type
+                * Return `"word_ready_for_parsing"` action
+
+5.  **ParseWordToSurveyNode**
+
+    * _Purpose_: To take the base `surveyJson` and `wordDocumentText` from shared memory, use LLMs to parse the Word document, and apply its content as modifications to the `surveyJson`.
+    * _Type_: Node
+    * _Steps_:
+        * `prep(shared: SharedMemory)`: 
+            * Validate that `shared.surveyJson` and `shared.wordDocumentText` exist
+            * Return both as a structured object
+        * `exec(prepRes: { baseSurvey: Questionnaire, wordText: string })`:
+            * **Step 1**: Use LLM to parse the Word document into structured chunks:
+                * Call `callLlm` with a prompt to analyze the Word text and separate it into logical chunks (blocks, questions)
+                * Parse the LLM response into an array of chunk objects
+            * **Step 2**: For each chunk, use LLM to generate JSON Patch operations:
+                * Call `callLlm` with a prompt that includes the current survey state, schema, and the chunk to process
+                * Parse the response into JSON Patch operations
+                * Apply the patch to the current survey state
+                * Validate the patched survey against the schema
+                * If valid, update the current survey state; otherwise, log the error and continue
+            * Return the final processed survey
+        * `post(shared: SharedMemory, prepRes, execRes: Questionnaire | Error)`:
+            * If `execRes` is an Error: Store error in `shared.errorMessage`. Return `"error"` action.
+            * Otherwise:
+                * Update `shared.surveyJson` with `execRes`
+                * Clear `shared.wordDocumentText` as it's been processed
+                * Add a helpful message to `shared.currentUserMessage`
+                * Return `"default"` action to proceed to ChatAgent
+
+6.  **ChatAgent Node**
+
+    * _Purpose_: To manage the iterative chat interaction with the user, modifying the survey based on their instructions.
+    * _Type_: Node
+    * _Steps_:
+        * `prep(shared: SharedMemory)`: 
+            * Read `shared.currentUserMessage` and `shared.surveyJson`. 
+            * Prepare a concise context for the LLM.
+        * `exec(prepRes)`: 
+            * Check for simple commands (save, exit) before calling the LLM
+            * For complex requests, call `callLlm` with a prompt to:
+                1. Analyze the user message
+                2. Determine the user's intent (modify, save, exit, display info)
+                3. For modifications, generate JSON Patch operations
+                4. Return a structured response with action and data
+        * `post(shared: SharedMemory, prepRes, execRes: { action: string, patch?: any[], content?: string })`: 
+            * Based on `execRes.action`:
+                * If `modify_survey`:
+                    1. Validate and apply the patch to `shared.surveyJson`
+                    2. Validate the result against the schema
+                    3. Update `shared.surveyJson` if valid
+                    4. Return `"modify_survey"` action
+                * If `save_survey`: Return `"save_survey"` action
+                * If `exit`: Return `"exit"` action
+                * If `display_response`: 
+                    1. Print the content to the console
+                    2. Return `"modify_survey"` action
+                * On errors: Store error in `shared.errorMessage`, return `"error"` action
+
+7.  **SaveToVoxco Node**
+
+    * _Purpose_: To save the final survey design to the Voxco platform using the API.
+    * _Type_: Node
+    * _Steps_:
+        * `prep(shared: SharedMemory)`: 
+            * Read `shared.surveyJson`, `shared.voxcoCredentials`, and `shared.activeVoxcoSurveyId`
+            * Return these values as a structured object
+        * `exec(prepRes: { surveyJson: Questionnaire, credentials: object, activeVoxcoSurveyId: number | null })`:
+            * Call `voxcoApiAuthenticate` using credentials to get a fresh token
+            * If `activeVoxcoSurveyId` is null:
+                * Call `voxcoApiCreateSurvey` to create a new survey
+                * Call `voxcoApiSaveSurvey` with the new ID and survey content
+            * Otherwise:
+                * Call `voxcoApiSaveSurvey` with the existing ID and survey content
+            * Return the survey ID (new or existing)
+        * `post(shared: SharedMemory, prepRes, execRes: number | Error)`:
+            * If `execRes` is an Error: Store error in `shared.errorMessage`. Return `"error"` action.
+            * Otherwise: 
+                * Update `shared.activeVoxcoSurveyId` if it was null
+                * Set `shared.saveStatus` to "success"
+                * Return `"default"` action
+
+8.  **ErrorHandler Node**
+
+    * _Purpose_: To process errors stored in `shared.errorMessage`, inform the user, and return to the `ChatAgent`.
+    * _Type_: Node
+    * _Steps_:
+        * `prep(shared: SharedMemory)`: Read `shared.errorMessage`
+        * `exec(errorMessage: string)`: Format and display the error to the user
+        * `post(shared: SharedMemory, prepRes, execRes)`:
+            * Clear `shared.errorMessage`
+            * Return `"default"` action (transitions back to `ChatAgent`)
