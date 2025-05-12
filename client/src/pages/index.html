@@ -16,13 +16,20 @@
             gap: 20px;
         }
         .setup-panel {
-            width: 30%;
+            width: 400px;
             padding: 20px;
             background-color: #f5f5f5;
             border-radius: 5px;
+            margin: 0 auto;
         }
         .chat-panel {
-            width: 70%;
+            width: 50%;
+            display: flex;
+            flex-direction: column;
+            height: 80vh;
+        }
+        .preview-panel {
+            width: 50%;
             display: flex;
             flex-direction: column;
             height: 80vh;
@@ -79,19 +86,25 @@
             overflow-y: auto;
         }
         .hidden {
-            display: none;
+            display: none !important;
         }
         .actions {
             display: flex;
             gap: 10px;
             margin-top: 10px;
         }
+        .main-interface {
+            display: flex;
+            width: 100%;
+            gap: 20px;
+        }
     </style>
 </head>
 <body>
     <h1>Survey Design Assistant</h1>
     
-    <div class="container">
+    <!-- Initial Setup Panel -->
+    <div id="initialization-container">
         <div class="setup-panel" id="setup-panel">
             <h2>Initialize Survey</h2>
             <div>
@@ -120,23 +133,32 @@
             
             <button id="initialize-btn">Initialize</button>
         </div>
-        
+    </div>
+    
+    <!-- Main Interface (Hidden Initially) -->
+    <div id="main-interface" class="main-interface hidden">
+        <!-- Chat Panel -->
         <div class="chat-panel">
+            <h2>Chat</h2>
             <div class="chat-messages" id="chat-messages">
-                <div class="message system-message">Welcome to the Survey Design Assistant! Please initialize a survey to begin.</div>
+                <div class="message system-message">Survey initialized successfully! You can now start modifying the survey.</div>
             </div>
             
             <div class="input-area">
-                <textarea id="message-input" placeholder="Type your instructions here..." disabled></textarea>
-                <button id="send-btn" disabled>Send</button>
+                <textarea id="message-input" placeholder="Type your instructions here..."></textarea>
+                <button id="send-btn">Send</button>
             </div>
             
             <div class="actions">
-                <button id="save-btn" disabled>Save to Voxco</button>
-                <button id="export-btn" disabled>Export JSON</button>
+                <button id="save-btn">Save to Voxco</button>
+                <button id="export-btn">Export JSON</button>
             </div>
-            
-            <div class="survey-json hidden" id="survey-json">
+        </div>
+        
+        <!-- Preview Panel -->
+        <div class="preview-panel">
+            <h2>Survey Preview</h2>
+            <div class="survey-json" id="survey-json">
                 <h3>Current Survey JSON</h3>
                 <pre id="json-content"></pre>
             </div>
@@ -164,6 +186,10 @@
         const surveyJsonDiv = document.getElementById('survey-json');
         const jsonContent = document.getElementById('json-content');
         
+        // Container elements for the flow
+        const initializationContainer = document.getElementById('initialization-container');
+        const mainInterface = document.getElementById('main-interface');
+        
         // Show/hide source input based on initialization type
         initTypeSelect.addEventListener('change', () => {
             const selectedType = initTypeSelect.value;
@@ -184,12 +210,14 @@
             const password = passwordInput.value;
             
             if (!username || !password) {
-                addMessage('Please enter Voxco credentials', 'system');
+                alert('Please enter Voxco credentials');
                 return;
             }
             
             try {
-                addMessage('Initializing survey...', 'system');
+                // Show loading message
+                initializeBtn.disabled = true;
+                initializeBtn.textContent = 'Initializing...';
                 
                 const response = await fetch(`${API_URL}/initialize`, {
                     method: 'POST',
@@ -207,25 +235,26 @@
                 const data = await response.json();
                 
                 if (data.error) {
-                    addMessage(`Error: ${data.message}`, 'system');
+                    alert(`Error: ${data.message}`);
+                    initializeBtn.disabled = false;
+                    initializeBtn.textContent = 'Initialize';
                     return;
                 }
                 
                 sessionId = data.sessionId;
                 currentSurvey = data.survey;
                 
-                // Enable chat interface
-                messageInput.disabled = false;
-                sendBtn.disabled = false;
-                saveBtn.disabled = false;
-                exportBtn.disabled = false;
-                
-                // Show survey JSON
+                // Update survey JSON preview
                 updateSurveyJson();
                 
-                addMessage('Survey initialized successfully! You can now start modifying the survey.', 'system');
+                // Switch to main interface
+                initializationContainer.classList.add('hidden');
+                mainInterface.classList.remove('hidden');
+                
             } catch (error) {
-                addMessage(`Error: ${error.message}`, 'system');
+                alert(`Error: ${error.message}`);
+                initializeBtn.disabled = false;
+                initializeBtn.textContent = 'Initialize';
             }
         });
         
@@ -236,6 +265,7 @@
             
             addMessage(message, 'user');
             messageInput.value = '';
+            sendBtn.disabled = true;
             
             try {
                 const response = await fetch(`${API_URL}/chat`, {
@@ -250,6 +280,7 @@
                 });
                 
                 const data = await response.json();
+                sendBtn.disabled = false;
                 
                 if (data.error) {
                     addMessage(`Error: ${data.message}`, 'system');
@@ -261,6 +292,7 @@
                 
                 addMessage(data.message, 'system');
             } catch (error) {
+                sendBtn.disabled = false;
                 addMessage(`Error: ${error.message}`, 'system');
             }
         });
@@ -276,6 +308,7 @@
         // Save to Voxco
         saveBtn.addEventListener('click', async () => {
             try {
+                saveBtn.disabled = true;
                 addMessage('Saving survey to Voxco...', 'system');
                 
                 const response = await fetch(`${API_URL}/save`, {
@@ -289,6 +322,7 @@
                 });
                 
                 const data = await response.json();
+                saveBtn.disabled = false;
                 
                 if (data.error) {
                     addMessage(`Error: ${data.message}`, 'system');
@@ -300,6 +334,7 @@
                 
                 addMessage(`Survey saved successfully! ${data.saveStatus || ''}`, 'system');
             } catch (error) {
+                saveBtn.disabled = false;
                 addMessage(`Error: ${error.message}`, 'system');
             }
         });
@@ -307,6 +342,8 @@
         // Export JSON
         exportBtn.addEventListener('click', async () => {
             try {
+                exportBtn.disabled = true;
+                
                 const response = await fetch(`${API_URL}/export`, {
                     method: 'POST',
                     headers: {
@@ -318,6 +355,7 @@
                 });
                 
                 const data = await response.json();
+                exportBtn.disabled = false;
                 
                 if (data.error) {
                     addMessage(`Error: ${data.message}`, 'system');
@@ -326,6 +364,7 @@
                 
                 addMessage(`Survey exported successfully! File: ${data.fileName}`, 'system');
             } catch (error) {
+                exportBtn.disabled = false;
                 addMessage(`Error: ${error.message}`, 'system');
             }
         });
@@ -342,7 +381,6 @@
         
         function updateSurveyJson() {
             if (currentSurvey) {
-                surveyJsonDiv.classList.remove('hidden');
                 jsonContent.textContent = JSON.stringify(currentSurvey, null, 2);
             }
         }
