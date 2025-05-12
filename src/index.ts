@@ -1,161 +1,333 @@
 import dotenv from 'dotenv';
 dotenv.config(); // Load .env variables
 
+import express, { Request, Response } from 'express';
+import cors from 'cors';
+import { v4 as uuidv4 } from 'uuid';
 import { SharedMemory } from "./types";
-import { createSurveyBotFlow } from "./flow";
 import { 
     InitializeSurvey, 
     ChatAgent, 
     SaveToVoxco, 
     ErrorHandler 
-} from "./nodes"; // Import node classes directly for manual execution
-import PromptSync from "prompt-sync";
+} from "./nodes";
 import fs from 'fs/promises';
 import path from 'path';
 
-const prompt = PromptSync({ sigint: true }); // Allows Ctrl+C exit
+// Create Express server
+const app = express();
+const PORT = process.env.PORT || 3000;
 
-// Helper function to get initial user setup
-async function getInitialSetup(): Promise<Partial<SharedMemory>> {
-    console.log("Welcome to the Survey Design Assistant!");
+// Middleware
+app.use(cors());
+app.use(express.json());
 
-    let initializationType: 'scratch' | 'api' | 'word' | null = null;
-    while (!initializationType) {
-        const typeChoice = prompt("Start from (1) Scratch, (2) Voxco API, or (3) Word Doc? [1/2/3]: ").trim();
-        if (typeChoice === '1') initializationType = 'scratch';
-        else if (typeChoice === '2') initializationType = 'api';
-        else if (typeChoice === '3') initializationType = 'word';
-        else console.log("Invalid choice.");
-    }
+// Session storage - in a production app, use Redis or a database
+const sessions: Record<string, {
+    shared: SharedMemory,
+    lastAccessed: Date
+}> = {};
 
-    let initializationSource: string | number | null = null;
-    if (initializationType === 'api') {
-        while (initializationSource === null) {
-            const surveyIdStr = prompt("Enter the Voxco Survey ID to import: ").trim();
-            const surveyId = parseInt(surveyIdStr, 10);
-            if (!isNaN(surveyId) && surveyId > 0) {
-                initializationSource = surveyId;
-            } else {
-                console.log("Invalid Survey ID. Please enter a positive number.");
-            }
+// Initialize node instances to be used across requests
+const initNode = new InitializeSurvey();
+const agentNode = new ChatAgent();
+const saveNode = new SaveToVoxco();
+const errorNode = new ErrorHandler();
+
+// Session cleanup - remove sessions older than 1 hour (run every 15 minutes)
+setInterval(() => {
+    const now = new Date();
+    Object.keys(sessions).forEach(sessionId => {
+        const lastAccessed = sessions[sessionId].lastAccessed;
+        if ((now.getTime() - lastAccessed.getTime()) > 3600000) { // 1 hour
+            delete sessions[sessionId];
+            console.log(`Session ${sessionId} expired and removed`);
         }
-    } else if (initializationType === 'word') {
-        while (initializationSource === null) {
-            const filePath = prompt("Enter the path to the Word document (.docx): ").trim();
-            try {
-                await fs.access(filePath);
-                initializationSource = filePath;
-            } catch (err) {
-                console.log(`Error: File not found or inaccessible at path: ${filePath}`);
-            }
-        }
-    }
+    });
+}, 900000); // 15 minutes
 
-    // Get Credentials (using environment variables first, then prompt)
-    let username = process.env.VOXCO_USERNAME;
-    let password = process.env.VOXCO_PASSWORD;
-
-    if (!username) {
-        username = prompt("Enter Voxco Username: ", { echo: '*' });
+// Helper function to get or create session
+function getOrCreateSession(sessionId?: string): { sessionId: string, shared: SharedMemory } {
+    if (sessionId && sessions[sessionId]) {
+        // Update last accessed time
+        sessions[sessionId].lastAccessed = new Date();
+        return { sessionId, shared: sessions[sessionId].shared };
     }
-    if (!password) {
-        password = prompt("Enter Voxco Password: ", { echo: '*' });
-    }
-
-    if (!username || !password) {
-        throw new Error("Voxco credentials are required.");
-    }
-
-    return {
-        initializationType,
-        initializationSource,
-        voxcoCredentials: { username, password }
+    
+    // Create new session
+    const newSessionId = uuidv4();
+    const shared: SharedMemory = {
+        initializationType: null,
+        initializationSource: null,
+        voxcoCredentials: undefined,
+        voxcoSurveyId: null, 
+        surveyJson: null,
+        currentUserMessage: null,
+        saveStatus: null,
+        errorMessage: null,
     };
+    
+    sessions[newSessionId] = {
+        shared,
+        lastAccessed: new Date()
+    };
+    
+    return { sessionId: newSessionId, shared };
 }
 
-// Main application logic
-async function main(): Promise<void> {
+// API Routes
+
+// Initialize a new survey
+app.post('/api/initialize', async function(req: Request, res: Response) {
     try {
-        const initialConfig = await getInitialSetup();
-
-        // Initialize shared memory based on args
-        const shared: SharedMemory = {
-            initializationType: initialConfig.initializationType || null,
-            initializationSource: initialConfig.initializationSource,
-            voxcoCredentials: initialConfig.voxcoCredentials,
-            voxcoSurveyId: null, // Initialize as null
-            surveyJson: null,
-            currentUserMessage: null,
-            saveStatus: null,
-            errorMessage: null,
-        };
-
-        // Create node instances (needed for manual execution loop)
-        const initNode = new InitializeSurvey();
-        const agentNode = new ChatAgent();
-        const saveNode = new SaveToVoxco();
-        const errorNode = new ErrorHandler();
-
-        console.log("\nInitializing survey...");
-        let nextAction = await initNode.run(shared); // Run initialization
-
-        // Main interaction loop
-        console.log("\nEnter your instructions to modify the survey (e.g., 'Add a question', 'Change the survey name to X', 'Save', 'Exit').");
-
-        while (nextAction !== 'exit') {
-            if (nextAction === 'error') {
-                // Run error handler and get its default action back
-                await errorNode.run(shared);
-                nextAction = "default"; // Error handler always returns to agent loop
-            }
-
-            if (nextAction === 'save_survey') {
-                console.log("\nSaving survey to Voxco...");
-                nextAction = await saveNode.run(shared); // Run save, returns default or error
-                if(nextAction === 'default') {
-                     console.log("Save process completed. You can continue editing or type 'Exit'.");
-                }
-                continue; // Go back to start of loop to handle save result (error or default)
-            }
-
-            // If action is 'default' (from Init, Save, Error) or 'modify_survey' (from Agent loop)
-            // We need user input to proceed with the ChatAgent
-            const userInput = prompt("> ").trim();
-
-            if (!userInput) continue; // Ignore empty input
-
-            const lowerInput = userInput.toLowerCase();
-            if (lowerInput === 'exit' || lowerInput === 'quit') {
-                nextAction = 'exit';
-                continue; // Exit the loop
-            }
-
-            // Update shared memory with user message and run agent
-            shared.currentUserMessage = userInput;
-            nextAction = await agentNode.run(shared);
+        const { initializationType, initializationSource, username, password } = req.body;
+        const { sessionId, shared } = getOrCreateSession(req.body.sessionId);
+        
+        // Validate required parameters
+        if (!initializationType || !username || !password) {
+            return res.status(400).json({ 
+                error: "Missing required parameters",
+                message: "initializationType, username, and password are required" 
+            });
         }
 
-        console.log("\nExiting Survey Design Assistant.");
-        if (shared.surveyJson) {
-            console.log("Final survey state:");
-            console.log(JSON.stringify(shared.surveyJson, null, 2));
-            // Optionally save to a local file on exit
-             const finalFileName = `output/survey_${shared.surveyJson.id || 'local'}_final.json`;
-             await fs.writeFile(finalFileName, JSON.stringify(shared.surveyJson, null, 2));
-             console.log(`Final survey JSON also saved locally to: ${finalFileName}`);
+        // Update shared memory with initialization parameters
+        shared.initializationType = initializationType;
+        shared.initializationSource = initializationSource;
+        shared.voxcoCredentials = { username, password };
+        
+        // Run initialization node
+        const nextAction = await initNode.run(shared);
+        
+        if (nextAction === 'error') {
+            // Run error handler
+            await errorNode.run(shared);
+            return res.status(400).json({ 
+                error: true,
+                message: shared.errorMessage,
+                sessionId
+            });
         }
-
+        
+        return res.status(200).json({ 
+            message: "Survey initialized successfully", 
+            survey: shared.surveyJson,
+            sessionId
+        });
     } catch (error) {
-        console.error("\n--- Critical Error Occurred ---");
-        const message = error instanceof Error ? error.message : String(error);
-        console.error("Error:", message);
-        if (error instanceof Error && error.stack) {
-             console.error("Stack Trace:", error.stack);
-        }
-        console.error("------------------------------");
-        process.exit(1); // Exit with error code
+        console.error("Error in /api/initialize:", error);
+        return res.status(500).json({ 
+            error: true,
+            message: error instanceof Error ? error.message : "Unknown error occurred" 
+        });
     }
-}
+});
 
-// Run the main function
-main();
+// Process user messages
+app.post('/api/chat', async function(req: Request, res: Response) {
+    try {
+        const { message, sessionId } = req.body;
+        
+        if (!sessionId || !sessions[sessionId]) {
+            return res.status(404).json({ 
+                error: true,
+                message: "Session not found. Please initialize a survey first." 
+            });
+        }
+        
+        if (!message) {
+            return res.status(400).json({ 
+                error: true,
+                message: "Message is required" 
+            });
+        }
+        
+        const { shared } = getOrCreateSession(sessionId);
+        
+        // Check if survey is initialized
+        if (!shared.surveyJson) {
+            return res.status(400).json({ 
+                error: true,
+                message: "Survey not initialized. Please initialize a survey first." 
+            });
+        }
+        
+        // Handle special commands
+        const lowerInput = message.toLowerCase();
+        if (lowerInput === 'save') {
+            // Handle save request as a separate action
+            return res.status(200).json({
+                message: "Use the /api/save endpoint to save the survey",
+                survey: shared.surveyJson,
+                sessionId
+            });
+        }
+        
+        // Update shared memory with user message
+        shared.currentUserMessage = message;
+        
+        // Run agent node
+        const nextAction = await agentNode.run(shared);
+        
+        if (nextAction === 'error') {
+            // Run error handler
+            await errorNode.run(shared);
+            return res.status(400).json({ 
+                error: true,
+                message: shared.errorMessage,
+                survey: shared.surveyJson,
+                sessionId
+            });
+        }
+        
+        // Return the display response if it exists, otherwise use a generic message
+        const responseMessage = shared.displayResponse || "Changes applied successfully";
+        
+        return res.status(200).json({
+            message: responseMessage,
+            survey: shared.surveyJson,
+            sessionId
+        });
+    } catch (error) {
+        console.error("Error in /api/chat:", error);
+        return res.status(500).json({ 
+            error: true,
+            message: error instanceof Error ? error.message : "Unknown error occurred" 
+        });
+    }
+});
+
+// Save survey to Voxco
+app.post('/api/save', async function(req: Request, res: Response) {
+    try {
+        const { sessionId } = req.body;
+        
+        if (!sessionId || !sessions[sessionId]) {
+            return res.status(404).json({ 
+                error: true,
+                message: "Session not found. Please initialize a survey first." 
+            });
+        }
+        
+        const { shared } = getOrCreateSession(sessionId);
+        
+        // Check if survey is initialized
+        if (!shared.surveyJson) {
+            return res.status(400).json({ 
+                error: true,
+                message: "Survey not initialized. Please initialize a survey first." 
+            });
+        }
+        
+        // Run save node
+        const nextAction = await saveNode.run(shared);
+        
+        if (nextAction === 'error') {
+            // Run error handler
+            await errorNode.run(shared);
+            return res.status(400).json({ 
+                error: true,
+                message: shared.errorMessage,
+                saveStatus: shared.saveStatus,
+                sessionId
+            });
+        }
+        
+        return res.status(200).json({
+            message: "Survey saved successfully",
+            saveStatus: shared.saveStatus,
+            survey: shared.surveyJson,
+            sessionId
+        });
+    } catch (error) {
+        console.error("Error in /api/save:", error);
+        return res.status(500).json({ 
+            error: true,
+            message: error instanceof Error ? error.message : "Unknown error occurred" 
+        });
+    }
+});
+
+// Get current survey state
+app.get('/api/survey', async function(req: Request, res: Response) {
+    try {
+        const sessionId = req.query.sessionId as string;
+        
+        if (!sessionId || !sessions[sessionId]) {
+            return res.status(404).json({ 
+                error: true,
+                message: "Session not found. Please initialize a survey first." 
+            });
+        }
+        
+        const { shared } = getOrCreateSession(sessionId);
+        
+        return res.status(200).json({
+            survey: shared.surveyJson,
+            sessionId
+        });
+    } catch (error) {
+        console.error("Error in /api/survey:", error);
+        return res.status(500).json({ 
+            error: true,
+            message: error instanceof Error ? error.message : "Unknown error occurred" 
+        });
+    }
+});
+
+// Export survey to JSON file
+app.post('/api/export', async function(req: Request, res: Response) {
+    try {
+        const { sessionId } = req.body;
+        
+        if (!sessionId || !sessions[sessionId]) {
+            return res.status(404).json({ 
+                error: true,
+                message: "Session not found. Please initialize a survey first." 
+            });
+        }
+        
+        const { shared } = getOrCreateSession(sessionId);
+        
+        // Check if survey is initialized
+        if (!shared.surveyJson) {
+            return res.status(400).json({ 
+                error: true,
+                message: "Survey not initialized. Please initialize a survey first." 
+            });
+        }
+        
+        // Save to output directory
+        const outputDir = path.join(process.cwd(), 'output');
+        
+        // Check if directory exists, create if not
+        try {
+            await fs.access(outputDir);
+        } catch {
+            await fs.mkdir(outputDir, { recursive: true });
+        }
+        
+        const finalFileName = `survey_${shared.surveyJson.id || 'local'}_${Date.now()}.json`;
+        const filePath = path.join(outputDir, finalFileName);
+        
+        await fs.writeFile(filePath, JSON.stringify(shared.surveyJson, null, 2));
+        
+        return res.status(200).json({
+            message: "Survey exported successfully",
+            fileName: finalFileName,
+            filePath: `/output/${finalFileName}`, // Relative path for client
+            sessionId
+        });
+    } catch (error) {
+        console.error("Error in /api/export:", error);
+        return res.status(500).json({ 
+            error: true,
+            message: error instanceof Error ? error.message : "Unknown error occurred" 
+        });
+    }
+});
+
+// Start the server
+app.listen(PORT, () => {
+    console.log(`Survey Design Assistant API running on port ${PORT}`);
+});

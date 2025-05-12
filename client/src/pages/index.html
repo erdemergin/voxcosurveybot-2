@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Survey Design Assistant</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .container {
+            display: flex;
+            gap: 20px;
+        }
+        .setup-panel {
+            width: 30%;
+            padding: 20px;
+            background-color: #f5f5f5;
+            border-radius: 5px;
+        }
+        .chat-panel {
+            width: 70%;
+            display: flex;
+            flex-direction: column;
+            height: 80vh;
+        }
+        .chat-messages {
+            flex-grow: 1;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            padding: 10px;
+            margin-bottom: 10px;
+            border-radius: 5px;
+        }
+        .input-area {
+            display: flex;
+            gap: 10px;
+        }
+        input, select, button, textarea {
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        textarea {
+            flex-grow: 1;
+            resize: none;
+        }
+        .message {
+            margin-bottom: 10px;
+            padding: 8px;
+            border-radius: 5px;
+        }
+        .user-message {
+            background-color: #e3f2fd;
+            text-align: right;
+        }
+        .system-message {
+            background-color: #f1f1f1;
+        }
+        .survey-json {
+            margin-top: 20px;
+            border: 1px solid #ddd;
+            padding: 10px;
+            border-radius: 5px;
+            background-color: #f9f9f9;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .hidden {
+            display: none;
+        }
+        .actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Survey Design Assistant</h1>
+    
+    <div class="container">
+        <div class="setup-panel" id="setup-panel">
+            <h2>Initialize Survey</h2>
+            <div>
+                <label for="init-type">Start from:</label>
+                <select id="init-type">
+                    <option value="scratch">Scratch</option>
+                    <option value="api">Voxco API</option>
+                    <option value="word">Word Document</option>
+                </select>
+            </div>
+            
+            <div id="source-input" class="hidden">
+                <label for="init-source">Source:</label>
+                <input type="text" id="init-source" placeholder="Survey ID or file path">
+            </div>
+            
+            <div>
+                <label for="username">Voxco Username:</label>
+                <input type="text" id="username">
+            </div>
+            
+            <div>
+                <label for="password">Voxco Password:</label>
+                <input type="password" id="password">
+            </div>
+            
+            <button id="initialize-btn">Initialize</button>
+        </div>
+        
+        <div class="chat-panel">
+            <div class="chat-messages" id="chat-messages">
+                <div class="message system-message">Welcome to the Survey Design Assistant! Please initialize a survey to begin.</div>
+            </div>
+            
+            <div class="input-area">
+                <textarea id="message-input" placeholder="Type your instructions here..." disabled></textarea>
+                <button id="send-btn" disabled>Send</button>
+            </div>
+            
+            <div class="actions">
+                <button id="save-btn" disabled>Save to Voxco</button>
+                <button id="export-btn" disabled>Export JSON</button>
+            </div>
+            
+            <div class="survey-json hidden" id="survey-json">
+                <h3>Current Survey JSON</h3>
+                <pre id="json-content"></pre>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // API endpoint
+        const API_URL = 'http://localhost:3000/api';
+        let sessionId = null;
+        let currentSurvey = null;
+        
+        // DOM elements
+        const initTypeSelect = document.getElementById('init-type');
+        const sourceInput = document.getElementById('source-input');
+        const initSourceInput = document.getElementById('init-source');
+        const usernameInput = document.getElementById('username');
+        const passwordInput = document.getElementById('password');
+        const initializeBtn = document.getElementById('initialize-btn');
+        const chatMessages = document.getElementById('chat-messages');
+        const messageInput = document.getElementById('message-input');
+        const sendBtn = document.getElementById('send-btn');
+        const saveBtn = document.getElementById('save-btn');
+        const exportBtn = document.getElementById('export-btn');
+        const surveyJsonDiv = document.getElementById('survey-json');
+        const jsonContent = document.getElementById('json-content');
+        
+        // Show/hide source input based on initialization type
+        initTypeSelect.addEventListener('change', () => {
+            const selectedType = initTypeSelect.value;
+            if (selectedType === 'scratch') {
+                sourceInput.classList.add('hidden');
+                initSourceInput.value = '';
+            } else {
+                sourceInput.classList.remove('hidden');
+                initSourceInput.placeholder = selectedType === 'api' ? 'Survey ID' : 'File path';
+            }
+        });
+        
+        // Initialize survey
+        initializeBtn.addEventListener('click', async () => {
+            const initializationType = initTypeSelect.value;
+            const initializationSource = initSourceInput.value || null;
+            const username = usernameInput.value;
+            const password = passwordInput.value;
+            
+            if (!username || !password) {
+                addMessage('Please enter Voxco credentials', 'system');
+                return;
+            }
+            
+            try {
+                addMessage('Initializing survey...', 'system');
+                
+                const response = await fetch(`${API_URL}/initialize`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        initializationType,
+                        initializationSource: initializationType === 'api' ? parseInt(initializationSource) : initializationSource,
+                        username,
+                        password
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.error) {
+                    addMessage(`Error: ${data.message}`, 'system');
+                    return;
+                }
+                
+                sessionId = data.sessionId;
+                currentSurvey = data.survey;
+                
+                // Enable chat interface
+                messageInput.disabled = false;
+                sendBtn.disabled = false;
+                saveBtn.disabled = false;
+                exportBtn.disabled = false;
+                
+                // Show survey JSON
+                updateSurveyJson();
+                
+                addMessage('Survey initialized successfully! You can now start modifying the survey.', 'system');
+            } catch (error) {
+                addMessage(`Error: ${error.message}`, 'system');
+            }
+        });
+        
+        // Send message
+        sendBtn.addEventListener('click', async () => {
+            const message = messageInput.value.trim();
+            if (!message) return;
+            
+            addMessage(message, 'user');
+            messageInput.value = '';
+            
+            try {
+                const response = await fetch(`${API_URL}/chat`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        sessionId,
+                        message
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.error) {
+                    addMessage(`Error: ${data.message}`, 'system');
+                    return;
+                }
+                
+                currentSurvey = data.survey;
+                updateSurveyJson();
+                
+                addMessage(data.message, 'system');
+            } catch (error) {
+                addMessage(`Error: ${error.message}`, 'system');
+            }
+        });
+        
+        // Enter key to send message
+        messageInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendBtn.click();
+            }
+        });
+        
+        // Save to Voxco
+        saveBtn.addEventListener('click', async () => {
+            try {
+                addMessage('Saving survey to Voxco...', 'system');
+                
+                const response = await fetch(`${API_URL}/save`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        sessionId
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.error) {
+                    addMessage(`Error: ${data.message}`, 'system');
+                    return;
+                }
+                
+                currentSurvey = data.survey;
+                updateSurveyJson();
+                
+                addMessage(`Survey saved successfully! ${data.saveStatus || ''}`, 'system');
+            } catch (error) {
+                addMessage(`Error: ${error.message}`, 'system');
+            }
+        });
+        
+        // Export JSON
+        exportBtn.addEventListener('click', async () => {
+            try {
+                const response = await fetch(`${API_URL}/export`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        sessionId
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.error) {
+                    addMessage(`Error: ${data.message}`, 'system');
+                    return;
+                }
+                
+                addMessage(`Survey exported successfully! File: ${data.fileName}`, 'system');
+            } catch (error) {
+                addMessage(`Error: ${error.message}`, 'system');
+            }
+        });
+        
+        // Helper functions
+        function addMessage(text, type) {
+            const messageDiv = document.createElement('div');
+            messageDiv.classList.add('message');
+            messageDiv.classList.add(`${type}-message`);
+            messageDiv.textContent = text;
+            chatMessages.appendChild(messageDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+        
+        function updateSurveyJson() {
+            if (currentSurvey) {
+                surveyJsonDiv.classList.remove('hidden');
+                jsonContent.textContent = JSON.stringify(currentSurvey, null, 2);
+            }
+        }
+    </script>
+</body>
+</html> 

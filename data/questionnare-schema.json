@@ -240,6 +240,12 @@
                   "description": "Question type",
                   "enum": [
                     "RadioButton",
+                    "AutoComplete",
+                    "HybridGrid",
+                    "NumericRanking",
+                    "DragDropRanking",
+                    "NetPromoter",
+                    "StarRatingGrid",
                     "DropDownList",
                     "CheckBox",
                     "Slider",
@@ -252,7 +258,8 @@
                     "RespondentLanguage",
                     "RespondentTimeZone",
                     "RespondentEmail",
-                    "Description"
+                    "Description",
+                    "Selection"
                   ]
                 },
                 "translatedTexts": {
@@ -292,6 +299,16 @@
                         "type": "string",
                         "description": "Variable name"
                       },
+                      "type": {
+                        "type": "integer",
+                        "description": "Variable classification: 0=Discrete, 1=Continuous, 2=Computed, 3=System",
+                        "enum": [0, 1, 2, 3]
+                      },
+                      "dataType": {
+                        "type": "integer",
+                        "description": "Variable data type: 0=Text, 1=Numeric, 2=Image, 3=Date, 4=File, 5=Base64",
+                        "enum": [0, 1, 2, 3, 4, 5]
+                      },
                       "maxMention": {
                         "type": "integer",
                         "description": "Maximum number of mentions"
@@ -309,6 +326,7 @@
                         "description": "Translated texts for the variable"
                       }
                     },
+                    "required": ["id", "name"],
                     "additionalProperties": false
                   }
                 },
@@ -408,7 +426,6 @@
                 }
               },
               "required": [
-                "TEXT"
               ],
               "additionalProperties": false
             },

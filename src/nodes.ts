@@ -309,6 +309,8 @@ Examples:
 
   async post(shared: SharedMemory, prepRes: AgentPrepResult, execRes: AgentExecResult): Promise<string> {
     shared.currentUserMessage = null // Clear message after processing
+    // Clear any previous display response at the start of each interaction
+    shared.displayResponse = null;
 
     if (execRes.action === 'error') {
       shared.errorMessage = execRes.errorMessage || "Unknown error in ChatAgent."
@@ -364,6 +366,8 @@ Examples:
     if (execRes.action === 'display_response') {
       if (execRes.content) {
          console.log("\nAssistant Response:\n---\n", execRes.content, "\n---")
+         // Store the display response in shared memory
+         shared.displayResponse = execRes.content;
       }
       return "modify_survey" // Loop back to agent for next user input
     }

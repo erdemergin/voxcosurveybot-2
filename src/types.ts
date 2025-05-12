@@ -46,6 +46,7 @@ export interface SharedMemory {
 
   // --- Chat Agent State ---
   currentUserMessage?: string | null; // The latest message from the user
+  displayResponse?: string | null; // Response from LLM that should be displayed to the user
   // Optional: Keep track of chat history if needed for context, manage its size
   // chatHistory?: ChatMessage[]; 
 
