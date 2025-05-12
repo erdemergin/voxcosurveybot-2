@@ -29,6 +29,7 @@ interface InitPrepResult {
   type: 'scratch' | 'api' | 'word' | null
   source?: string | Buffer | number | null
   credentials?: { username: string, password: string }
+  surveyName?: string | null
 }
 
 export class InitializeSurvey extends Node<SharedMemory> {
@@ -46,7 +47,8 @@ export class InitializeSurvey extends Node<SharedMemory> {
     return {
       type: shared.initializationType,
       source: shared.initializationSource,
-      credentials: shared.voxcoCredentials
+      credentials: shared.voxcoCredentials,
+      surveyName: shared.surveyName
     }
   }
 
@@ -58,7 +60,7 @@ export class InitializeSurvey extends Node<SharedMemory> {
           // Create a minimal valid Questionnaire object
           const scratchSurvey: Questionnaire = {
             id: null,
-            name: "New Survey from Bot",
+            name: prepRes.surveyName || "New Survey from Bot",
             version: 1,
             useS2: false,
             settings: {},
@@ -326,39 +328,76 @@ Examples:
       try {
         // IMPORTANT: Apply patch to a clone to validate before committing
         const clonedSurvey = JSON.parse(JSON.stringify(shared.surveyJson))
-        const patchResult = applyPatch(clonedSurvey, execRes.patch)
         
-        // Check if patching introduced errors (applyPatch might return errors or just modify in place)
-        // We rely on schema validation primarily
-        if (!patchResult || !patchResult.newDocument) {
+        // First check that the patch is valid by itself
+        try {
+          const patchResult = applyPatch(clonedSurvey, execRes.patch)
+          
+          // Check if patching introduced errors (applyPatch might return errors or just modify in place)
+          // We rely on schema validation primarily
+          if (!patchResult || !patchResult.newDocument) {
              throw new Error("JSON patch application failed internally.")
+          }
+          
+          // Validate the *result* against the schema
+          const isValid = validateSchema(patchResult.newDocument)
+          if (!isValid) {
+            console.error("Schema validation failed after applying patch:", validateSchema.errors)
+            
+            // Format validation errors in a more user-friendly way
+            const formattedErrors = validateSchema.errors?.map(err => {
+              const path = err.instancePath || '';
+              const message = err.message || 'Unknown validation error';
+              const keyword = err.keyword || '';
+              const params = err.params ? JSON.stringify(err.params) : '';
+              
+              return `- ${path}: ${message} (${keyword} ${params})`;
+            }).join('\n');
+            
+            // Provide specific validation errors back to the user/LLM if possible
+            shared.errorMessage = `Modification failed: Survey JSON validation error. Please fix the following issues:\n${formattedErrors}`;
+            // Store validation errors for display in UI
+            shared.displayResponse = `The changes couldn't be applied because of validation errors:\n${formattedErrors}`;
+            
+            // Optional: Inform user via console
+            console.log(`Modification rejected: JSON validation failed. Errors: ${formattedErrors}`);
+            
+            // We loop back to the agent without changing the survey
+            return "modify_survey" 
+          }
+          
+          // If patch and validation successful, update the shared state
+          shared.surveyJson = patchResult.newDocument as Questionnaire
+          shared.errorMessage = null // Clear error on success
+          console.log("Survey successfully modified.")
+          return "modify_survey" // Loop back for next user message
+        } catch (patchError) {
+          // Handle specific patch errors
+          console.error("Error applying JSON patch:", patchError)
+          
+          // Format specific patch error details
+          let errorDetails = '';
+          if (patchError instanceof Error) {
+            // Special handling for JsonPatchError which might have additional details
+            if ('operation' in patchError) {
+              const opDetails = (patchError as any).operation;
+              errorDetails = `\nFailed operation: ${JSON.stringify(opDetails, null, 2)}`;
+            }
+          }
+          
+          const message = patchError instanceof Error ? patchError.message : String(patchError)
+          shared.errorMessage = `Modification failed: ${message}${errorDetails}`;
+          // Also set display response for better UI feedback
+          shared.displayResponse = `Failed to apply the changes: ${message}${errorDetails}`;
+          // Don't transition to error node, just report via errorMessage and loop
+          console.log(`Modification rejected: Error applying patch - ${message}${errorDetails}`)
+          return "modify_survey" // Loop back to agent
         }
-
-        // Validate the *result* against the schema
-        const isValid = validateSchema(patchResult.newDocument)
-        if (!isValid) {
-          console.error("Schema validation failed after applying patch:", validateSchema.errors)
-          // Provide specific validation errors back to the user/LLM if possible
-          const validationErrors = ajv.errorsText(validateSchema.errors)
-          shared.errorMessage = `Modification failed: Resulting survey is invalid. Errors: ${validationErrors}`
-          // Optional: Inform user via console
-          console.log(`Modification rejected: Resulting survey is invalid. Errors: ${validationErrors}`)
-          // We loop back to the agent without changing the survey
-          return "modify_survey" 
-        }
-
-        // If patch and validation successful, update the shared state
-        shared.surveyJson = patchResult.newDocument as Questionnaire
-        shared.errorMessage = null // Clear error on success
-        console.log("Survey successfully modified.")
-        return "modify_survey" // Loop back for next user message
-
-      } catch (patchError) {
-        console.error("Error applying JSON patch or validating result:", patchError)
-        const message = patchError instanceof Error ? patchError.message : String(patchError)
-        shared.errorMessage = `Modification failed: ${message}`
-        // Don't transition to error node, just report via errorMessage and loop
-        console.log(`Modification rejected: Error applying patch - ${message}`)
+      } catch (processingError) {
+        console.error("Error in patch processing or validation:", processingError)
+        const message = processingError instanceof Error ? processingError.message : String(processingError)
+        shared.errorMessage = `Modification failed: ${message}`;
+        shared.displayResponse = `Error processing your request: ${message}`;
         return "modify_survey" // Loop back to agent
       }
     }

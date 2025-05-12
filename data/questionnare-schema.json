@@ -326,7 +326,7 @@
                         "description": "Translated texts for the variable"
                       }
                     },
-                    "required": ["id", "name"],
+                    "required": ["name"],
                     "additionalProperties": false
                   }
                 },

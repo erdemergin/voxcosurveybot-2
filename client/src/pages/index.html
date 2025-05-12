@@ -76,6 +76,16 @@
         .system-message {
             background-color: #f1f1f1;
         }
+        .error-message {
+            background-color: #ffebee;
+            border-left: 3px solid #f44336;
+            color: #d32f2f;
+        }
+        #init-error {
+            padding: 10px;
+            margin-bottom: 15px;
+            border-radius: 4px;
+        }
         .survey-json {
             margin-top: 20px;
             border: 1px solid #ddd;
@@ -107,6 +117,7 @@
     <div id="initialization-container">
         <div class="setup-panel" id="setup-panel">
             <h2>Initialize Survey</h2>
+            <div id="init-error" class="error-message hidden"></div>
             <div>
                 <label for="init-type">Start from:</label>
                 <select id="init-type">
@@ -119,6 +130,11 @@
             <div id="source-input" class="hidden">
                 <label for="init-source">Source:</label>
                 <input type="text" id="init-source" placeholder="Survey ID or file path">
+            </div>
+
+            <div id="survey-name-input">
+                <label for="survey-name">Survey Name:</label>
+                <input type="text" id="survey-name" placeholder="Enter survey name">
             </div>
             
             <div>
@@ -175,6 +191,7 @@
         const initTypeSelect = document.getElementById('init-type');
         const sourceInput = document.getElementById('source-input');
         const initSourceInput = document.getElementById('init-source');
+        const surveyNameInput = document.getElementById('survey-name');
         const usernameInput = document.getElementById('username');
         const passwordInput = document.getElementById('password');
         const initializeBtn = document.getElementById('initialize-btn');
@@ -196,9 +213,14 @@
             if (selectedType === 'scratch') {
                 sourceInput.classList.add('hidden');
                 initSourceInput.value = '';
+                // Show survey name input for scratch initialization
+                document.getElementById('survey-name-input').classList.remove('hidden');
             } else {
                 sourceInput.classList.remove('hidden');
                 initSourceInput.placeholder = selectedType === 'api' ? 'Survey ID' : 'File path';
+                // Hide survey name input for non-scratch initialization
+                document.getElementById('survey-name-input').classList.add('hidden');
+                surveyNameInput.value = '';
             }
         });
         
@@ -206,6 +228,7 @@
         initializeBtn.addEventListener('click', async () => {
             const initializationType = initTypeSelect.value;
             const initializationSource = initSourceInput.value || null;
+            const surveyName = surveyNameInput.value || null;
             const username = usernameInput.value;
             const password = passwordInput.value;
             
@@ -227,6 +250,7 @@
                     body: JSON.stringify({
                         initializationType,
                         initializationSource: initializationType === 'api' ? parseInt(initializationSource) : initializationSource,
+                        surveyName,
                         username,
                         password
                     })
@@ -235,7 +259,9 @@
                 const data = await response.json();
                 
                 if (data.error) {
-                    alert(`Error: ${data.message}`);
+                    const errorDiv = document.getElementById('init-error');
+                    errorDiv.textContent = `Error: ${data.message}`;
+                    errorDiv.classList.remove('hidden');
                     initializeBtn.disabled = false;
                     initializeBtn.textContent = 'Initialize';
                     return;
@@ -252,7 +278,9 @@
                 mainInterface.classList.remove('hidden');
                 
             } catch (error) {
-                alert(`Error: ${error.message}`);
+                const errorDiv = document.getElementById('init-error');
+                errorDiv.textContent = `Error: ${error.message}`;
+                errorDiv.classList.remove('hidden');
                 initializeBtn.disabled = false;
                 initializeBtn.textContent = 'Initialize';
             }
@@ -283,7 +311,7 @@
                 sendBtn.disabled = false;
                 
                 if (data.error) {
-                    addMessage(`Error: ${data.message}`, 'system');
+                    addMessage(`Error: ${data.message}`, 'error');
                     return;
                 }
                 
@@ -325,7 +353,7 @@
                 saveBtn.disabled = false;
                 
                 if (data.error) {
-                    addMessage(`Error: ${data.message}`, 'system');
+                    addMessage(`Error: ${data.message}`, 'error');
                     return;
                 }
                 
@@ -358,7 +386,7 @@
                 exportBtn.disabled = false;
                 
                 if (data.error) {
-                    addMessage(`Error: ${data.message}`, 'system');
+                    addMessage(`Error: ${data.message}`, 'error');
                     return;
                 }
                 
@@ -374,7 +402,20 @@
             const messageDiv = document.createElement('div');
             messageDiv.classList.add('message');
             messageDiv.classList.add(`${type}-message`);
-            messageDiv.textContent = text;
+            
+            // Check if the message contains newlines
+            if (text.includes('\n')) {
+                // Create a pre element to preserve formatting for multi-line messages
+                const preElement = document.createElement('pre');
+                preElement.style.margin = '0';
+                preElement.style.whiteSpace = 'pre-wrap';
+                preElement.style.fontFamily = 'inherit';
+                preElement.textContent = text;
+                messageDiv.appendChild(preElement);
+            } else {
+                messageDiv.textContent = text;
+            }
+            
             chatMessages.appendChild(messageDiv);
             chatMessages.scrollTop = chatMessages.scrollHeight;
         }
@@ -384,6 +425,9 @@
                 jsonContent.textContent = JSON.stringify(currentSurvey, null, 2);
             }
         }
+        
+        // Trigger change event on page load to set initial state
+        initTypeSelect.dispatchEvent(new Event('change'));
     </script>
 </body>
 </html> 

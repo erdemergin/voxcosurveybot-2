@@ -40,6 +40,7 @@ export interface SharedMemory {
   initializationSource?: string | Buffer | number | null; // File path, buffer, or Voxco Survey ID
   voxcoCredentials?: { username: string, password: string }; // Raw credentials obtained via prompt (console) or env vars (production)
   voxcoSurveyId: number | null; // Explicit ID of the survey on Voxco platform
+  surveyName?: string | null; // User-provided survey name for initialization
 
   // --- Core Survey Data ---
   surveyJson?: Questionnaire | null; // The main survey object being built/modified

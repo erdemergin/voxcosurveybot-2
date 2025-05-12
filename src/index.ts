@@ -61,6 +61,7 @@ function getOrCreateSession(sessionId?: string): { sessionId: string, shared: Sh
         initializationSource: null,
         voxcoCredentials: undefined,
         voxcoSurveyId: null, 
+        surveyName: null,
         surveyJson: null,
         currentUserMessage: null,
         saveStatus: null,
@@ -80,7 +81,7 @@ function getOrCreateSession(sessionId?: string): { sessionId: string, shared: Sh
 // Initialize a new survey
 app.post('/api/initialize', async function(req: Request, res: Response) {
     try {
-        const { initializationType, initializationSource, username, password } = req.body;
+        const { initializationType, initializationSource, username, password, surveyName } = req.body;
         const { sessionId, shared } = getOrCreateSession(req.body.sessionId);
         
         // Validate required parameters
@@ -95,6 +96,7 @@ app.post('/api/initialize', async function(req: Request, res: Response) {
         shared.initializationType = initializationType;
         shared.initializationSource = initializationSource;
         shared.voxcoCredentials = { username, password };
+        shared.surveyName = surveyName || null;
         
         // Run initialization node
         const nextAction = await initNode.run(shared);
