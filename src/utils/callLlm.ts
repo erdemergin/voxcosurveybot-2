@@ -4,6 +4,7 @@ import dotenv from 'dotenv'
 dotenv.config() // Load .env file
 
 const apiKey = process.env.GOOGLE_API_KEY
+const debugLlmApi = process.env.DEBUG_LLM_API === 'true'
 
 if (!apiKey) {
   console.warn(
@@ -27,17 +28,30 @@ const model = genAI
   : null
 
 // Basic implementation using Google Generative AI
-export async function callLlm(prompt: string): Promise<string> {
+export async function callLlm(prompt: string, debug = debugLlmApi): Promise<string> {
   if (!model) {
     throw new Error(
       'Generative AI client not initialized. Check GOOGLE_API_KEY.'
     )
   }
 
+  if (debug) {
+    console.debug('===== LLM REQUEST =====')
+    console.debug(prompt)
+    console.debug('======================')
+  }
+
   try {
     const result = await model.generateContent(prompt)
     const response = result.response
     const text = response.text()
+    
+    if (debug) {
+      console.debug('===== LLM RESPONSE =====')
+      console.debug(text)
+      console.debug('=======================')
+    }
+    
     return text || ''
   } catch (error) {
     console.error('Error calling LLM (Google Generative AI):', error)
@@ -47,11 +61,17 @@ export async function callLlm(prompt: string): Promise<string> {
 }
 
 // New function to get the stream of the result and wait for it to end
-export async function callLlmStream(prompt: string): Promise<string> {
+export async function callLlmStream(prompt: string, debug = debugLlmApi): Promise<string> {
   if (!model) {
     throw new Error(
       'Generative AI client not initialized. Check GOOGLE_API_KEY.'
     );
+  }
+
+  if (debug) {
+    console.debug('===== LLM STREAM REQUEST =====')
+    console.debug(prompt)
+    console.debug('============================')
   }
 
   try {
@@ -60,7 +80,19 @@ export async function callLlmStream(prompt: string): Promise<string> {
     for await (const chunk of result.stream) {
       const chunkText = chunk.text();
       text += chunkText;
+      if (debug) {
+        console.debug('===== LLM STREAM CHUNK =====')
+        console.debug(chunkText)
+        console.debug('===========================')
+      }
     }
+    
+    if (debug) {
+      console.debug('===== LLM STREAM COMPLETE RESPONSE =====')
+      console.debug(text)
+      console.debug('=====================================')
+    }
+    
     return text;
   } catch (error) {
     console.error('Error calling LLM stream (Google Generative AI):', error);

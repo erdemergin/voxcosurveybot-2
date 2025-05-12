@@ -13,7 +13,7 @@
       "description": "Date of survey creation/modification in ISO format"
     },
     "id": {
-      "type": "integer",
+      "type": ["integer", "null"],
       "description": "Unique identifier for the survey"
     },
     "name": {

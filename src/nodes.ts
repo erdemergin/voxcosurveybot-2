@@ -234,7 +234,7 @@ Schema of the Survey JSON: ${JSON.stringify(questionnaireSchema, null, 2)}
 User message: "${prepRes.userMessage}"
 
 Analyze the user message. Determine the intent: modify the survey, save the survey, display information about the survey, or exit.
-If modifying, generate a JSON Patch (RFC 6902) array to apply the change to the survey JSON. Ensure the patch is valid and targets existing paths where appropriate (unless adding). **IMPORTANT: When adding new elements (like blocks, questions, choices), DO NOT generate an 'id' field. Leave it out or set it to null.** The system will handle ID generation.
+If modifying, generate a JSON Patch (RFC 6902) array to apply the change to the survey JSON. Ensure the patch is valid and targets existing paths where appropriate (unless adding). **IMPORTANT: When adding or modifying elements, DO NOT include properties with null values. Completely omit any property that would be null or empty instead of explicitly setting it to null.** For example, don't include 'rows' at all instead of setting 'rows: null'. The system will handle ID generation, so always omit 'id' fields in new elements.
 If displaying information (e.g., showing the current structure, answering a question about it), generate a text response for the user.
 If saving or exiting, respond with the action only.
 
