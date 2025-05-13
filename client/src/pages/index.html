@@ -112,9 +112,16 @@
 </head>
 <body>
     <h1>Survey Design Assistant</h1>
+
+    <!-- Customer Type Selection -->
+    <div id="customer-type-selection" style="text-align: center; margin-bottom: 20px;">
+        <h2>Select Customer Type</h2>
+        <button id="final-customer-btn" style="margin-right: 10px;">Final Customer</button>
+        <button id="voxco-customer-btn">Voxco Customer</button>
+    </div>
     
-    <!-- Initial Setup Panel -->
-    <div id="initialization-container">
+    <!-- Initial Setup Panel (Hidden Initially) -->
+    <div id="initialization-container" class="hidden">
         <div class="setup-panel" id="setup-panel">
             <h2>Initialize Survey</h2>
             <div id="init-error" class="error-message hidden"></div>
@@ -122,7 +129,7 @@
                 <label for="init-type">Start from:</label>
                 <select id="init-type">
                     <option value="scratch">Scratch</option>
-                    <option value="api">Voxco API</option>
+                    <option value="api" id="voxco-api-option">Voxco API</option>
                     <option value="word">Word Document</option>
                 </select>
             </div>
@@ -186,6 +193,7 @@
         const API_URL = 'http://localhost:3000/api';
         let sessionId = null;
         let currentSurvey = null;
+        let isFinalCustomer = false; // Flag to track customer type
         
         // DOM elements
         const initTypeSelect = document.getElementById('init-type');
@@ -202,6 +210,14 @@
         const exportBtn = document.getElementById('export-btn');
         const surveyJsonDiv = document.getElementById('survey-json');
         const jsonContent = document.getElementById('json-content');
+        
+        // Customer type buttons
+        const finalCustomerBtn = document.getElementById('final-customer-btn');
+        const voxcoCustomerBtn = document.getElementById('voxco-customer-btn');
+        const customerTypeSelectionDiv = document.getElementById('customer-type-selection');
+
+        // UI elements to hide for final customer
+        const voxcoApiOption = document.getElementById('voxco-api-option');
         
         // Container elements for the flow
         const initializationContainer = document.getElementById('initialization-container');
@@ -224,17 +240,49 @@
             }
         });
         
+        // Customer Type Button Logic
+        finalCustomerBtn.addEventListener('click', () => {
+            isFinalCustomer = true; // Set flag for final customer
+            voxcoApiOption.classList.add('hidden');
+            saveBtn.classList.add('hidden'); // Hide Save to Voxco button
+            // Hide username and password fields
+            usernameInput.parentElement.classList.add('hidden');
+            passwordInput.parentElement.classList.add('hidden');
+            // If "Voxco API" was selected, reset to "Scratch"
+            if (initTypeSelect.value === 'api') {
+                initTypeSelect.value = 'scratch';
+                // Manually trigger change event to update UI
+                initTypeSelect.dispatchEvent(new Event('change'));
+            }
+            initializationContainer.classList.remove('hidden');
+            customerTypeSelectionDiv.classList.add('hidden');
+        });
+
+        voxcoCustomerBtn.addEventListener('click', () => {
+            isFinalCustomer = false; // Set flag for voxco customer
+            voxcoApiOption.classList.remove('hidden');
+            saveBtn.classList.remove('hidden'); // Show Save to Voxco button
+            // Show username and password fields
+            usernameInput.parentElement.classList.remove('hidden');
+            passwordInput.parentElement.classList.remove('hidden');
+            initializationContainer.classList.remove('hidden');
+            customerTypeSelectionDiv.classList.add('hidden');
+        });
+        
         // Initialize survey
         initializeBtn.addEventListener('click', async () => {
             const initializationType = initTypeSelect.value;
             const initializationSource = initSourceInput.value || null;
             const surveyName = surveyNameInput.value || null;
-            const username = usernameInput.value;
-            const password = passwordInput.value;
+            let username = usernameInput.value;
+            let password = passwordInput.value;
             
-            if (!username || !password) {
+            if (!isFinalCustomer && (!username || !password)) {
                 alert('Please enter Voxco credentials');
                 return;
+            } else if (isFinalCustomer) {
+                username = "temp";
+                password = "temp";
             }
             
             try {
