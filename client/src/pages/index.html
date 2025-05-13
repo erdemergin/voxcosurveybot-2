@@ -419,6 +419,7 @@
         exportBtn.addEventListener('click', async () => {
             try {
                 exportBtn.disabled = true;
+                addMessage('Exporting survey as JSON...', 'system');
                 
                 const response = await fetch(`${API_URL}/export`, {
                     method: 'POST',
@@ -430,18 +431,49 @@
                     })
                 });
                 
-                const data = await response.json();
                 exportBtn.disabled = false;
-                
-                if (data.error) {
-                    addMessage(`Error: ${data.message}`, 'error');
+
+                if (!response.ok) {
+                    // Try to parse error from JSON response if possible
+                    let errorMessage = `HTTP error ${response.status}`;
+                    try {
+                        const errorData = await response.json();
+                        if (errorData && errorData.message) {
+                            errorMessage = errorData.message;
+                        }
+                    } catch (e) {
+                        // If not JSON, use text
+                        errorMessage = await response.text() || errorMessage;
+                    }
+                    addMessage(`Error exporting survey: ${errorMessage}`, 'error');
                     return;
                 }
                 
-                addMessage(`Survey exported successfully! File: ${data.fileName}`, 'system');
+                // Get filename from Content-Disposition header
+                const contentDisposition = response.headers.get('Content-Disposition');
+                let fileName = 'survey.json'; // Default filename
+                if (contentDisposition) {
+                    const fileNameMatch = contentDisposition.match(/filename=\"?([^\"]+)\"?/i);
+                    if (fileNameMatch && fileNameMatch[1]) {
+                        fileName = fileNameMatch[1];
+                    }
+                }
+
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.style.display = 'none';
+                a.href = url;
+                a.download = fileName;
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+                document.body.removeChild(a);
+                
+                addMessage(`Survey "${fileName}" downloaded successfully!`, 'system');
             } catch (error) {
                 exportBtn.disabled = false;
-                addMessage(`Error: ${error.message}`, 'system');
+                addMessage(`Error exporting survey: ${error.message}`, 'error');
             }
         });
         

@@ -299,33 +299,38 @@ app.post('/api/export', async function(req: Request, res: Response) {
             });
         }
         
-        // Save to output directory
+        // Generate file content
+        const surveyContent = JSON.stringify(shared.surveyJson, null, 2);
+        const finalFileName = `survey_${shared.surveyJson.id || 'local'}_${Date.now()}.json`;
+
+        // Save to output directory (optional, can be removed if not needed elsewhere)
         const outputDir = path.join(process.cwd(), 'output');
-        
-        // Check if directory exists, create if not
         try {
             await fs.access(outputDir);
         } catch {
             await fs.mkdir(outputDir, { recursive: true });
         }
-        
-        const finalFileName = `survey_${shared.surveyJson.id || 'local'}_${Date.now()}.json`;
         const filePath = path.join(outputDir, finalFileName);
-        
-        await fs.writeFile(filePath, JSON.stringify(shared.surveyJson, null, 2));
-        
-        return res.status(200).json({
-            message: "Survey exported successfully",
-            fileName: finalFileName,
-            filePath: `/output/${finalFileName}`, // Relative path for client
-            sessionId
-        });
+        await fs.writeFile(filePath, surveyContent);
+        console.log(`Survey exported to server path: ${filePath}`); // Log server path
+
+        // Send file content as response
+        res.setHeader('Content-Disposition', `attachment; filename="${finalFileName}"`);
+        res.setHeader('Content-Type', 'application/json');
+        res.send(surveyContent);
+
+        // Note: We no longer return a JSON object with filePath, 
+        // as the file content is sent directly.
+
     } catch (error) {
         console.error("Error in /api/export:", error);
-        return res.status(500).json({ 
-            error: true,
-            message: error instanceof Error ? error.message : "Unknown error occurred" 
-        });
+        // Ensure headers aren't already sent before sending error response
+        if (!res.headersSent) {
+            return res.status(500).json({ 
+                error: true,
+                message: error instanceof Error ? error.message : "Unknown error occurred during export" 
+            });
+        }
     }
 });
 
