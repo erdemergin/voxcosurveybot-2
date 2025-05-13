@@ -26,7 +26,7 @@ const validateSchema = ajv.compile(questionnaireSchema)
 // --- InitializeSurvey Node --- 
 
 interface InitPrepResult {
-  type: 'scratch' | 'api' | 'word' | null
+  type: 'scratch' | 'api' | 'word' | 'json' | null
   source?: string | Buffer | number | null
   credentials?: { username: string, password: string }
   surveyName?: string | null

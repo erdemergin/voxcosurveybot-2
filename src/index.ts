@@ -277,6 +277,60 @@ app.get('/api/survey', async function(req: Request, res: Response) {
     }
 });
 
+// Initialize survey from imported JSON
+app.post('/api/initialize-json', async function(req: Request, res: Response) {
+    try {
+        const { surveyJson, username, password } = req.body; // Assuming credentials might be needed for session association or future use
+        const { sessionId, shared } = getOrCreateSession(req.body.sessionId); // Allow existing session or create new
+
+        if (!surveyJson) {
+            return res.status(400).json({ 
+                error: true,
+                message: "Survey JSON content is required for import." 
+            });
+        }
+
+        // Basic validation of the imported JSON (can be expanded with a schema validator)
+        if (typeof surveyJson !== 'object' || surveyJson === null) {
+            return res.status(400).json({
+                error: true,
+                message: "Invalid survey JSON format."
+            });
+        }
+
+        // Update shared memory
+        shared.surveyJson = surveyJson;
+        shared.initializationType = 'json'; // Mark how this session was initialized
+        shared.initializationSource = 'fileupload'; // Or a more descriptive source like the filename if available
+        shared.surveyName = surveyJson.name || 'Imported Survey'; // Use name from JSON or a default
+        
+        // If credentials are provided, store them (e.g., if needed for subsequent save operations)
+        if (username && password) {
+            shared.voxcoCredentials = { username, password };
+        }
+        
+        // At this point, the survey is "initialized" with the imported JSON.
+        // No further node processing like initNode is needed here unless there's a specific
+        // post-import processing step defined.
+
+        return res.status(200).json({ 
+            message: "Survey imported and initialized successfully", 
+            survey: shared.surveyJson,
+            sessionId
+        });
+
+    } catch (error) {
+        console.error("Error in /api/initialize-json:", error);
+        // Ensure headers aren't already sent before sending error response
+        if (!res.headersSent) {
+            return res.status(500).json({ 
+                error: true,
+                message: error instanceof Error ? error.message : "Unknown error occurred during JSON import initialization" 
+            });
+        }
+    }
+});
+
 // Export survey to JSON file
 app.post('/api/export', async function(req: Request, res: Response) {
     try {

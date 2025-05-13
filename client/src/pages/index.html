@@ -131,6 +131,7 @@
                     <option value="scratch">Scratch</option>
                     <option value="api" id="voxco-api-option">Voxco API</option>
                     <option value="word">Word Document</option>
+                    <option value="json">Import JSON</option>
                 </select>
             </div>
             
@@ -229,12 +230,15 @@
             if (selectedType === 'scratch') {
                 sourceInput.classList.add('hidden');
                 initSourceInput.value = '';
-                // Show survey name input for scratch initialization
                 document.getElementById('survey-name-input').classList.remove('hidden');
+            } else if (selectedType === 'json') {
+                sourceInput.classList.add('hidden');
+                initSourceInput.value = '';
+                document.getElementById('survey-name-input').classList.add('hidden');
+                surveyNameInput.value = '';
             } else {
                 sourceInput.classList.remove('hidden');
                 initSourceInput.placeholder = selectedType === 'api' ? 'Survey ID' : 'File path';
-                // Hide survey name input for non-scratch initialization
                 document.getElementById('survey-name-input').classList.add('hidden');
                 surveyNameInput.value = '';
             }
@@ -286,9 +290,76 @@
             }
             
             try {
-                // Show loading message
                 initializeBtn.disabled = true;
                 initializeBtn.textContent = 'Initializing...';
+
+                if (initializationType === 'json') {
+                    const fileInput = document.createElement('input');
+                    fileInput.type = 'file';
+                    fileInput.accept = '.json';
+                    fileInput.style.display = 'none';
+
+                    fileInput.addEventListener('change', async (event) => {
+                        const file = event.target.files[0];
+                        if (!file) {
+                            initializeBtn.disabled = false;
+                            initializeBtn.textContent = 'Initialize';
+                            return;
+                        }
+
+                        try {
+                            const fileContent = await file.text();
+                            const surveyJsonToImport = JSON.parse(fileContent);
+
+                            // For Import JSON, use a different endpoint or modify existing one
+                            // Let's assume a new endpoint /api/initialize-json for clarity
+                            const response = await fetch(`${API_URL}/initialize-json`, {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json'
+                                },
+                                body: JSON.stringify({
+                                    surveyJson: surveyJsonToImport,
+                                    // sessionId can be sent if we want to reuse an existing one
+                                    // or let the backend create/manage it.
+                                    // For simplicity, let backend handle session for import like new init.
+                                    username: isFinalCustomer ? "temp" : username, // Send credentials for consistency if needed
+                                    password: isFinalCustomer ? "temp" : password
+                                })
+                            });
+
+                            const data = await response.json();
+                            initializeBtn.disabled = false;
+                            initializeBtn.textContent = 'Initialize';
+
+                            if (!response.ok || data.error) {
+                                const errorDiv = document.getElementById('init-error');
+                                errorDiv.textContent = `Error: ${data.message || 'Failed to import JSON'}`;
+                                errorDiv.classList.remove('hidden');
+                                return;
+                            }
+
+                            sessionId = data.sessionId;
+                            currentSurvey = data.survey;
+                            updateSurveyJson();
+                            initializationContainer.classList.add('hidden');
+                            mainInterface.classList.remove('hidden');
+                            addMessage(`Survey imported from ${file.name} and initialized successfully!`, 'system');
+
+                        } catch (fileError) {
+                            const errorDiv = document.getElementById('init-error');
+                            errorDiv.textContent = `Error processing file: ${fileError.message}`;
+                            errorDiv.classList.remove('hidden');
+                            initializeBtn.disabled = false;
+                            initializeBtn.textContent = 'Initialize';
+                        }
+                    });
+                    document.body.appendChild(fileInput);
+                    fileInput.click();
+                    // No need to remove fileInput immediately, allow change event to fire
+                    // Consider removing it after processing or if a new file selection is initiated.
+                    return; // Important: exit here for JSON type, as file selection is async
+                }
                 
                 const response = await fetch(`${API_URL}/initialize`, {
                     method: 'POST',
