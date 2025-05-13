@@ -332,6 +332,8 @@
                             initializeBtn.disabled = false;
                             initializeBtn.textContent = 'Initialize';
 
+                            console.log('Import JSON - Server responded with data:', data); // Log server response
+
                             if (!response.ok || data.error) {
                                 const errorDiv = document.getElementById('init-error');
                                 errorDiv.textContent = `Error: ${data.message || 'Failed to import JSON'}`;
@@ -340,6 +342,7 @@
                             }
 
                             sessionId = data.sessionId;
+                            console.log('Import JSON - Client sessionId updated to:', sessionId); // Log new session ID
                             currentSurvey = data.survey;
                             updateSurveyJson();
                             initializationContainer.classList.add('hidden');
@@ -458,6 +461,8 @@
                 saveBtn.disabled = true;
                 addMessage('Saving survey to Voxco...', 'system');
                 
+                console.log('Save to Voxco - Sending sessionId:', sessionId); // Log sessionId being sent
+
                 const response = await fetch(`${API_URL}/save`, {
                     method: 'POST',
                     headers: {

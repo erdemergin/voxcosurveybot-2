@@ -48,14 +48,17 @@ setInterval(() => {
 
 // Helper function to get or create session
 function getOrCreateSession(sessionId?: string): { sessionId: string, shared: SharedMemory } {
+    console.log(`getOrCreateSession called with sessionId: ${sessionId}`);
     if (sessionId && sessions[sessionId]) {
         // Update last accessed time
         sessions[sessionId].lastAccessed = new Date();
+        console.log(`Returning existing session: ${sessionId}`);
         return { sessionId, shared: sessions[sessionId].shared };
     }
     
     // Create new session
     const newSessionId = uuidv4();
+    console.log(`Creating new session: ${newSessionId}`);
     const shared: SharedMemory = {
         initializationType: null,
         initializationSource: null,
@@ -203,8 +206,11 @@ app.post('/api/chat', async function(req: Request, res: Response) {
 app.post('/api/save', async function(req: Request, res: Response) {
     try {
         const { sessionId } = req.body;
+        console.log(`/api/save called with sessionId: ${sessionId}`);
+        console.log(`Current server sessions at /api/save:`, Object.keys(sessions));
         
         if (!sessionId || !sessions[sessionId]) {
+            console.error(`Session not found in /api/save. SessionId: ${sessionId}. Available sessions: ${Object.keys(sessions).join(', ')}`);
             return res.status(404).json({ 
                 error: true,
                 message: "Session not found. Please initialize a survey first." 
@@ -312,6 +318,9 @@ app.post('/api/initialize-json', async function(req: Request, res: Response) {
         // At this point, the survey is "initialized" with the imported JSON.
         // No further node processing like initNode is needed here unless there's a specific
         // post-import processing step defined.
+
+        console.log(`Session ${sessionId} initialized via JSON import. Credentials stored:`, shared.voxcoCredentials ? 'Yes' : 'No');
+        console.log(`Current server sessions:`, Object.keys(sessions));
 
         return res.status(200).json({ 
             message: "Survey imported and initialized successfully", 
