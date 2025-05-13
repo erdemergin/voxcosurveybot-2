@@ -231,12 +231,19 @@ app.post('/api/save', async function(req: Request, res: Response) {
         const nextAction = await saveNode.run(shared);
         
         if (nextAction === 'error') {
-            // Run error handler
-            await errorNode.run(shared);
+            // Capture the relevant shared state *before* ErrorHandler potentially modifies it
+            const messageToClient = shared.errorMessage || "An error occurred during the save process.";
+            const surveyIdForClient = shared.voxcoSurveyId; 
+            const saveStatusForClient = shared.saveStatus;
+
+            // Run error handler (e.g., for logging or other side effects)
+            await errorNode.run(shared); 
+
             return res.status(400).json({ 
                 error: true,
-                message: shared.errorMessage,
-                saveStatus: shared.saveStatus,
+                message: messageToClient,       // Use the captured message
+                saveStatus: saveStatusForClient, // Use the captured save status
+                voxcoSurveyId: surveyIdForClient, // Use the captured survey ID
                 sessionId
             });
         }

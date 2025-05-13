@@ -59,7 +59,6 @@ export class InitializeSurvey extends Node<SharedMemory> {
           console.log("Initializing new survey from scratch...")
           // Create a minimal valid Questionnaire object
           const scratchSurvey: Questionnaire = {
-            id: null,
             name: prepRes.surveyName || "New Survey from Bot",
             version: 1,
             useS2: false,
@@ -424,6 +423,12 @@ interface SavePrepResult {
   currentVoxcoSurveyId: number | null
 }
 
+// Define a more structured return type for exec
+interface SaveExecResult {
+  surveyId?: number; // ID is present on success or partial failure (creation ok, save fail)
+  error?: Error;     // Error is present on any failure
+}
+
 export class SaveToVoxco extends Node<SharedMemory> {
   async prep(shared: SharedMemory): Promise<SavePrepResult> {
     if (!shared.surveyJson) {
@@ -440,22 +445,22 @@ export class SaveToVoxco extends Node<SharedMemory> {
     }
   }
 
-  async exec(prepRes: SavePrepResult): Promise<number | Error> { // Returns survey ID on success
+  async exec(prepRes: SavePrepResult): Promise<SaveExecResult> {
     const surveyToSave = prepRes.surveyJson
     const credentials = prepRes.credentials
     const currentId = prepRes.currentVoxcoSurveyId
+    let surveyIdToSave: number | undefined = undefined; // Initialize as undefined
 
     if (!prepRes.surveyJson) {
-      return new Error("Cannot save, survey JSON is missing.")
+      return { error: new Error("Cannot save, survey JSON is missing.") }
     }
     if (!prepRes.credentials) {
-        return new Error("Cannot save, Voxco credentials are missing.")
+        return { error: new Error("Cannot save, Voxco credentials are missing.") }
     }
 
     try {
         const token = await voxcoApiAuthenticate(credentials)
-        let surveyIdToSave: number;
-
+        
         if (currentId === null) {
             // First save for a new survey
             console.log("Creating new survey on Voxco platform...")
@@ -463,10 +468,10 @@ export class SaveToVoxco extends Node<SharedMemory> {
             const createResult = await voxcoApiCreateSurvey(surveyName, token)
             
             if (typeof createResult.surveyId !== 'number') {
-                throw new Error(`Failed to get valid survey ID from create survey response: ${JSON.stringify(createResult)}`)
+                // If creation fails to return ID, it's a definite error before ID is known
+                 return { error: new Error(`Failed to get valid survey ID from create survey response: ${JSON.stringify(createResult)}`) }
             }
             surveyIdToSave = createResult.surveyId;
-
             console.log(`New survey created with ID: ${surveyIdToSave}. Now saving content...`)
         } else {
             // Update existing survey
@@ -474,31 +479,50 @@ export class SaveToVoxco extends Node<SharedMemory> {
             console.log(`Updating existing survey with ID: ${surveyIdToSave} on Voxco platform...`)
         }
         
-        // Perform the save/update operation
+        // Now that surveyIdToSave is definitely a number, perform the save/update
         await voxcoApiSaveSurvey(surveyIdToSave, surveyToSave, token)
         console.log(`Survey content (ID: ${surveyIdToSave}) saved successfully.`)    
-        return surveyIdToSave // Return the ID used for saving
+        return { surveyId: surveyIdToSave } // Return success with ID
 
     } catch (error) {
         console.error("Error during SaveToVoxco execution:", error)
-        return error instanceof Error ? error : new Error(String(error))
+        const theError = error instanceof Error ? error : new Error(String(error))
+        // If an error occurred, return it, potentially *with* the ID if it was determined before the error
+        if (surveyIdToSave !== undefined) {
+            return { surveyId: surveyIdToSave, error: theError } 
+        } else {
+            return { error: theError } // Error occurred before ID was known
+        }
     }
   }
 
-  async post(shared: SharedMemory, prepRes: SavePrepResult, execRes: number | Error): Promise<string> {
-    if (execRes instanceof Error) {
-      shared.errorMessage = `Save failed: ${execRes.message}`
+  async post(shared: SharedMemory, prepRes: SavePrepResult, execRes: SaveExecResult): Promise<string> {
+    if (execRes.error) {
+      // Handle error case
+      shared.errorMessage = `Save failed: ${execRes.error.message}`
       shared.saveStatus = false
+      // STILL set the survey ID if it was returned alongside the error
+      if (execRes.surveyId !== undefined) {
+        shared.voxcoSurveyId = execRes.surveyId 
+        console.log(`SaveToVoxco failed, but Survey ID ${execRes.surveyId} is stored.`)
+      } else {
+          console.log(`SaveToVoxco failed before Survey ID could be determined.`)
+      }
       return "error"
-    } else {
-       // execRes is the saved survey ID (number)
-       const savedSurveyId = execRes
-       shared.saveStatus = true
-       shared.voxcoSurveyId = savedSurveyId // Update shared memory with the definitive ID
-
+    } else if (execRes.surveyId !== undefined) {
+      // Handle success case
+      const savedSurveyId = execRes.surveyId
+      shared.saveStatus = true
+      shared.voxcoSurveyId = savedSurveyId // Update shared memory with the definitive ID
       shared.errorMessage = null
       console.log(`SaveToVoxco finished successfully. Survey ID ${savedSurveyId} is stored.`)
-      return "default" // Or maybe back to agent? Depends on desired flow after save.
+      return "default" 
+    } else {
+      // Should not happen with the current exec logic, but handle defensively
+      shared.errorMessage = `Save failed: Unknown state in post-processing.`
+      shared.saveStatus = false
+      console.error("SaveToVoxco.post reached an unexpected state:", execRes)
+      return "error"
     }
   }
 }

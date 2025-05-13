@@ -477,14 +477,18 @@
                 saveBtn.disabled = false;
                 
                 if (data.error) {
-                    addMessage(`Error: ${data.message}`, 'error');
+                    let errorMessage = `Error: ${data.message}`;
+                    if (data.voxcoSurveyId) {
+                        errorMessage += ` (Survey ID: ${data.voxcoSurveyId})`;
+                    }
+                    addMessage(errorMessage, 'error');
                     return;
                 }
                 
                 currentSurvey = data.survey;
                 updateSurveyJson();
                 
-                addMessage(`Survey saved successfully! ${data.saveStatus || ''}`, 'system');
+                addMessage(`Survey saved to Voxco successfully!`, 'system');
             } catch (error) {
                 saveBtn.disabled = false;
                 addMessage(`Error: ${error.message}`, 'system');
@@ -494,8 +498,7 @@
         // Export JSON
         exportBtn.addEventListener('click', async () => {
             try {
-                exportBtn.disabled = true;
-                addMessage('Exporting survey as JSON...', 'system');
+                addMessage('Exporting survey to JSON...', 'system');
                 
                 const response = await fetch(`${API_URL}/export`, {
                     method: 'POST',
@@ -507,58 +510,35 @@
                     })
                 });
                 
-                exportBtn.disabled = false;
-
-                if (!response.ok) {
-                    // Try to parse error from JSON response if possible
-                    let errorMessage = `HTTP error ${response.status}`;
-                    try {
-                        const errorData = await response.json();
-                        if (errorData && errorData.message) {
-                            errorMessage = errorData.message;
-                        }
-                    } catch (e) {
-                        // If not JSON, use text
-                        errorMessage = await response.text() || errorMessage;
-                    }
-                    addMessage(`Error exporting survey: ${errorMessage}`, 'error');
+                const data = await response.json();
+                
+                if (data.error) {
+                    addMessage(`Error: ${data.message}`, 'error');
                     return;
                 }
                 
-                // Get filename from Content-Disposition header
-                const contentDisposition = response.headers.get('Content-Disposition');
-                let fileName = 'survey.json'; // Default filename
-                if (contentDisposition) {
-                    const fileNameMatch = contentDisposition.match(/filename=\"?([^\"]+)\"?/i);
-                    if (fileNameMatch && fileNameMatch[1]) {
-                        fileName = fileNameMatch[1];
-                    }
-                }
-
-                const blob = await response.blob();
-                const url = window.URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.style.display = 'none';
-                a.href = url;
-                a.download = fileName;
-                document.body.appendChild(a);
-                a.click();
-                window.URL.revokeObjectURL(url);
-                document.body.removeChild(a);
+                const blob = new Blob([data.surveyJson], { type: 'application/json' });
+                const link = document.createElement('a');
+                link.href = URL.createObjectURL(blob);
+                link.download = `survey_${sessionId}.json`;
+                link.click();
+                URL.revokeObjectURL(link.href);
                 
-                addMessage(`Survey "${fileName}" downloaded successfully!`, 'system');
+                addMessage('Survey exported to JSON successfully!', 'system');
             } catch (error) {
                 exportBtn.disabled = false;
-                addMessage(`Error exporting survey: ${error.message}`, 'error');
+                addMessage(`Error: ${error.message}`, 'system');
             }
         });
-        
+
         // Helper functions
         function addMessage(text, type) {
             const messageDiv = document.createElement('div');
             messageDiv.classList.add('message');
             messageDiv.classList.add(`${type}-message`);
             
+            const chatMessages = document.getElementById('chat-messages'); // Ensure chatMessages is accessible
+
             // Check if the message contains newlines
             if (text.includes('\n')) {
                 // Create a pre element to preserve formatting for multi-line messages
@@ -572,18 +552,29 @@
                 messageDiv.textContent = text;
             }
             
-            chatMessages.appendChild(messageDiv);
-            chatMessages.scrollTop = chatMessages.scrollHeight;
+            if (chatMessages) {
+                chatMessages.appendChild(messageDiv);
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+            } else {
+                console.error('chatMessages element not found for addMessage');
+            }
         }
         
         function updateSurveyJson() {
-            if (currentSurvey) {
+            const jsonContent = document.getElementById('json-content'); // Ensure jsonContent is accessible
+            if (currentSurvey && jsonContent) {
                 jsonContent.textContent = JSON.stringify(currentSurvey, null, 2);
+            } else if (!jsonContent) {
+                console.error('jsonContent element not found for updateSurveyJson');
             }
         }
         
         // Trigger change event on page load to set initial state
-        initTypeSelect.dispatchEvent(new Event('change'));
+        if (initTypeSelect) {
+            initTypeSelect.dispatchEvent(new Event('change'));
+        } else {
+            console.error('initTypeSelect element not found for dispatching change event. Check original declaration.');
+        }
     </script>
 </body>
-</html> 
+</html>
